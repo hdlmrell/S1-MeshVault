@@ -84,6 +84,31 @@ namespace MeshVault.Tools
         private List<MeshRenderer> _extractSourceRenderers;
         private string _extractNodeName;
 
+        // Material preview panel
+        private GameObject _materialPreviewPanel;
+        private Camera _materialPreviewCamera;
+        private RenderTexture _materialPreviewRT;
+        private GameObject _materialPreviewMeshCopy;
+        private string _materialPreviewEntryId;
+        private string[] _materialPreviewOverrides;
+        private Color?[] _colorPreviewOverrides;
+        private Dictionary<int, GameObject> _selectedSwatchBorders;
+        private GameObject _colorPickerOverlay;
+        private Dictionary<string, float[]> _materialCatalog;
+        private GameObject _previewBackdrop;
+        private RawImage _previewRawImage;
+        private Vector3 _previewOrbitCenter;
+        private float _previewOrbitYaw;
+        private float _previewOrbitPitch;
+        private float _previewOrbitDist;
+        private float _previewOrbitDistMin;
+        private bool _previewDragging;
+        private Vector3 _previewDragStart;
+
+        // Positioner overrides (persist from preview through position/log cycle)
+        private string[] _positionerMaterialOverrides;
+        private Color?[] _positionerColorOverrides;
+
         // Combined Mesh Browser
         private GameObject _combinedMeshPanel;
         private Dictionary<Mesh, List<MeshRenderer>> _combinedMeshGroups;
@@ -114,6 +139,7 @@ namespace MeshVault.Tools
                 else
                 {
                     CloseSpawnPanel();
+                    ClosePreviewPanel();
                     CloseCombinedMeshPanel();
                     CloseHierarchyPanel();
                     DestroyPreview();
@@ -197,7 +223,7 @@ namespace MeshVault.Tools
                 return;
             }
 
-            if ((_combinedMeshPanel != null || _hierarchyPanel != null || _spawnPanel != null))
+            if ((_combinedMeshPanel != null || _hierarchyPanel != null || _spawnPanel != null || _materialPreviewPanel != null))
             {
                 if (Input.GetKeyDown(KeyCode.Tab))
                 {
@@ -218,6 +244,10 @@ namespace MeshVault.Tools
                     }
                 }
             }
+
+            // Interactive preview: orbit + zoom
+            if (_materialPreviewPanel != null && !_tabLooking)
+                UpdatePreviewInteraction();
 
             if (_extractMode)
             {
@@ -249,7 +279,12 @@ namespace MeshVault.Tools
 
             if (Input.GetKeyDown(KeyCode.Delete))
             {
-                if (_spawnPanel != null)
+                if (_materialPreviewPanel != null)
+                {
+                    ClosePreviewPanel();
+                    _lastAction = "Preview panel closed";
+                }
+                else if (_spawnPanel != null)
                 {
                     CloseSpawnPanel();
                     _lastAction = "Spawn panel closed";
@@ -321,6 +356,8 @@ namespace MeshVault.Tools
             _previewSourceTransform = null;
             _previewSourceName = null;
             _previewDbId = null;
+            _positionerMaterialOverrides = null;
+            _positionerColorOverrides = null;
         }
 
         private void LogPlacement()
@@ -348,14 +385,54 @@ namespace MeshVault.Tools
 
             if (_previewDbId != null)
             {
-                output += $"\n[MeshPlacer] MeshVaultAPI.Spawn(\"{_previewDbId}\", " +
-                    $"new Vector3({p.x:F4}f, {p.y:F4}f, {p.z:F4}f), " +
-                    $"Quaternion.Euler({r.x:F2}f, {r.y:F2}f, {r.z:F2}f))";
+                output += $"\n[MeshPlacer] {FormatSpawnCall(_previewDbId, p, r, _positionerMaterialOverrides, _positionerColorOverrides)}";
             }
 
             Melon<MeshVaultPlugin>.Logger.Msg(output);
             GUIUtility.systemCopyBuffer = output;
             _lastAction = "Logged to clipboard";
+        }
+
+        private static string FormatSpawnCall(string id, Vector3 pos, Vector3 rot,
+            string[] materialOverrides, Color?[] colorOverrides)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"MeshVaultAPI.Spawn(\"{id}\", ");
+            sb.Append($"new Vector3({pos.x:F4}f, {pos.y:F4}f, {pos.z:F4}f), ");
+            sb.Append($"Quaternion.Euler({rot.x:F2}f, {rot.y:F2}f, {rot.z:F2}f)");
+
+            if (materialOverrides != null)
+            {
+                sb.Append(", materialOverrides: new[] { ");
+                for (int i = 0; i < materialOverrides.Length; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    sb.Append(materialOverrides[i] != null ? $"\"{materialOverrides[i]}\"" : "null");
+                }
+                sb.Append(" }");
+            }
+
+            if (colorOverrides != null)
+            {
+                sb.Append(", colorOverrides: new Color?[] { ");
+                for (int i = 0; i < colorOverrides.Length; i++)
+                {
+                    if (i > 0) sb.Append(", ");
+                    if (colorOverrides[i].HasValue)
+                    {
+                        var c = colorOverrides[i].Value;
+                        sb.Append($"new Color({c.r:F2}f, {c.g:F2}f, {c.b:F2}f, {c.a:F2}f)");
+                    }
+                    else
+                    {
+                        sb.Append("null");
+                    }
+                }
+                sb.Append(" }");
+            }
+
+            sb.Append(")");
+            return sb.ToString();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -366,7 +443,7 @@ namespace MeshVault.Tools
         {
             if (!_active) return;
 
-            if (_hierarchyPanel != null || _combinedMeshPanel != null || _spawnPanel != null)
+            if (_hierarchyPanel != null || _combinedMeshPanel != null || _spawnPanel != null || _materialPreviewPanel != null)
             {
                 GUI.Label(new Rect(10, 10, 400, 24), $"<b><color=#00ffff>MeshPlacer</color></b>  {_lastAction}");
                 return;
@@ -525,6 +602,7 @@ namespace MeshVault.Tools
             CloseHierarchyPanel();
             CloseCombinedMeshPanel();
             CloseSpawnPanel();
+            ClosePreviewPanel();
         }
     }
 }

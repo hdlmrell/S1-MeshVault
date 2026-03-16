@@ -36,6 +36,19 @@ namespace MeshVault
         private static readonly Dictionary<string, Material> _materialCache = new Dictionary<string, Material>();
         private static readonly Dictionary<string, Texture> _textureCache = new Dictionary<string, Texture>();
 
+        private static readonly HashSet<string> _materialBlacklist = new HashSet<string>
+        {
+            "SM_AC_Impostor",
+            "filing cabinet mat",
+            "mastermat1",
+            "pallet rack mat",
+            "pallet mat",
+            "PolygonGangWarfare_Material_01_A",
+            "PropsMat",
+            "small bin mat",
+            "rubbish bin mat"
+        };
+
         private static string DiskPath =>
             Path.Combine(Application.dataPath, "..", "UserData", "MeshVault", "MeshDatabase.json");
 
@@ -159,6 +172,60 @@ namespace MeshVault
             return _cache;
         }
 
+        /// <summary>
+        /// Scans all database entries and returns a dictionary mapping every unique material name
+        /// to its representative RGBA color, excluding blacklisted mesh-specific materials.
+        /// </summary>
+        public static Dictionary<string, float[]> BuildMaterialCatalog()
+        {
+            EnsureLoaded();
+            var catalog = new Dictionary<string, float[]>();
+
+            foreach (var kvp in _cache)
+            {
+                var entry = kvp.Value;
+
+                if (!string.IsNullOrEmpty(entry.MaterialName)
+                    && !catalog.ContainsKey(entry.MaterialName)
+                    && !_materialBlacklist.Contains(entry.MaterialName))
+                {
+                    catalog[entry.MaterialName] = entry.Color ?? DefaultColor;
+                }
+
+                if (entry.SubMeshMaterialNames != null)
+                {
+                    for (int i = 0; i < entry.SubMeshMaterialNames.Length; i++)
+                    {
+                        string matName = entry.SubMeshMaterialNames[i];
+                        if (string.IsNullOrEmpty(matName) || catalog.ContainsKey(matName)
+                            || _materialBlacklist.Contains(matName))
+                            continue;
+
+                        float[] color = (entry.SubMeshColorTints != null && i < entry.SubMeshColorTints.Length
+                                         && entry.SubMeshColorTints[i] != null)
+                            ? entry.SubMeshColorTints[i]
+                            : entry.Color ?? DefaultColor;
+                        catalog[matName] = color;
+                    }
+                }
+
+                if (entry.ChildMeshes != null)
+                {
+                    foreach (var child in entry.ChildMeshes)
+                    {
+                        if (!string.IsNullOrEmpty(child.MaterialName)
+                            && !catalog.ContainsKey(child.MaterialName)
+                            && !_materialBlacklist.Contains(child.MaterialName))
+                        {
+                            catalog[child.MaterialName] = child.Color ?? DefaultColor;
+                        }
+                    }
+                }
+            }
+
+            return catalog;
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // Debug tool support
         // ═══════════════════════════════════════════════════════════════
@@ -200,9 +267,13 @@ namespace MeshVault
         /// <param name="rotation">World rotation for the spawned object.</param>
         /// <param name="parent">Optional parent transform.</param>
         /// <param name="namePrefix">Prefix for the GameObject name.</param>
+        /// <param name="materialOverrides">Optional per-slot material name overrides.
+        /// Indices 0..N-1 map to submeshes, N..N+M-1 to child meshes.
+        /// Null entries keep the default material.</param>
         /// <returns>The spawned GameObject, or null if the entry was not found.</returns>
         public static GameObject Spawn(string id, Vector3 position, Quaternion rotation,
-            Transform parent = null, string namePrefix = "MeshVault")
+            Transform parent = null, string namePrefix = "MeshVault",
+            string[] materialOverrides = null, Color?[] colorOverrides = null)
         {
             var entry = GetMesh(id);
             if (entry == null)
@@ -238,6 +309,18 @@ namespace MeshVault
                 materials = new Material[subMeshCount];
                 for (int s = 0; s < subMeshCount; s++)
                 {
+                    // Material override takes priority
+                    if (materialOverrides != null && s < materialOverrides.Length
+                        && materialOverrides[s] != null)
+                    {
+                        var overrideMat = FindSceneMaterial(materialOverrides[s]);
+                        if (overrideMat != null)
+                        {
+                            materials[s] = overrideMat;
+                            continue;
+                        }
+                    }
+
                     string shaderName = (entry.SubMeshShaderNames != null && s < entry.SubMeshShaderNames.Length)
                         ? entry.SubMeshShaderNames[s] : "";
                     bool isWorldspaceUV = shaderName.Contains(WorldspaceUVShaderTag);
@@ -272,7 +355,19 @@ namespace MeshVault
                 // Legacy single-material path
                 mesh.triangles = entry.Triangles;
 
-                if (!string.IsNullOrEmpty(entry.TextureName))
+                // Material override for single-material entries (index 0)
+                Material singleOverride = null;
+                if (materialOverrides != null && materialOverrides.Length > 0
+                    && materialOverrides[0] != null)
+                {
+                    singleOverride = FindSceneMaterial(materialOverrides[0]);
+                }
+
+                if (singleOverride != null)
+                {
+                    materials = new[] { singleOverride };
+                }
+                else if (!string.IsNullOrEmpty(entry.TextureName))
                 {
                     var bakedMat = CreateBakedMaterial(entry.TextureName, entry.BakedColorTint);
                     materials = new[] { bakedMat ?? CreateFallbackMaterial(entry) };
@@ -326,8 +421,22 @@ namespace MeshVault
                     childMC.sharedMesh = childMesh;
                     var childMR = childGO.AddComponent<MeshRenderer>();
 
-                    var sceneMat = FindSceneMaterial(child.MaterialName);
-                    if (sceneMat != null)
+                    // Child mesh material override (index continues after submeshes)
+                    int overrideIdx = (entry.SubMeshTriCounts != null && entry.SubMeshTriCounts.Length > 0)
+                        ? entry.SubMeshTriCounts.Length + c
+                        : 1 + c;
+                    Material childOverride = null;
+                    if (materialOverrides != null && overrideIdx < materialOverrides.Length
+                        && materialOverrides[overrideIdx] != null)
+                    {
+                        childOverride = FindSceneMaterial(materialOverrides[overrideIdx]);
+                    }
+
+                    if (childOverride != null)
+                    {
+                        childMR.sharedMaterial = childOverride;
+                    }
+                    else if (FindSceneMaterial(child.MaterialName) is Material sceneMat)
                     {
                         childMR.sharedMaterial = sceneMat;
                     }
@@ -345,6 +454,43 @@ namespace MeshVault
                         if (fallbackMat.HasProperty(ShaderPropSmoothness))
                             fallbackMat.SetFloat(ShaderPropSmoothness, DefaultSmoothness);
                         childMR.sharedMaterial = fallbackMat;
+                    }
+                }
+            }
+
+            // Apply color overrides — instantiate material per slot to avoid mutating shared materials
+            if (colorOverrides != null)
+            {
+                var mainMR = go.GetComponent<MeshRenderer>();
+                if (mainMR != null)
+                {
+                    var mats = mainMR.sharedMaterials;
+                    for (int i = 0; i < mats.Length && i < colorOverrides.Length; i++)
+                    {
+                        if (!colorOverrides[i].HasValue) continue;
+                        mats[i] = new Material(mats[i]);
+                        mats[i].color = colorOverrides[i].Value;
+                        if (mats[i].HasProperty(ShaderPropBaseColor))
+                            mats[i].SetColor(ShaderPropBaseColor, colorOverrides[i].Value);
+                    }
+                    mainMR.sharedMaterials = mats;
+                }
+
+                int mainSlots = (entry.SubMeshTriCounts != null && entry.SubMeshTriCounts.Length > 0)
+                    ? entry.SubMeshTriCounts.Length : 1;
+                if (entry.ChildMeshes != null)
+                {
+                    for (int c = 0; c < entry.ChildMeshes.Length; c++)
+                    {
+                        int idx = mainSlots + c;
+                        if (idx >= colorOverrides.Length || !colorOverrides[idx].HasValue) continue;
+                        var childMR = go.transform.GetChild(c)?.GetComponent<MeshRenderer>();
+                        if (childMR == null) continue;
+                        var mat = new Material(childMR.sharedMaterial);
+                        mat.color = colorOverrides[idx].Value;
+                        if (mat.HasProperty(ShaderPropBaseColor))
+                            mat.SetColor(ShaderPropBaseColor, colorOverrides[idx].Value);
+                        childMR.sharedMaterial = mat;
                     }
                 }
             }

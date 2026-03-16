@@ -147,10 +147,10 @@ namespace MeshVault.Tools
 
                     // Buttons — anchored to right edge of row
                     string capturedId = entryId;
-                    CreateRowButton(rowObj.transform, "Here", -224, -170, new Color(0.15f, 0.4f, 0.15f),
+                    CreateRowButton(rowObj.transform, "Place", -224, -170, new Color(0.15f, 0.4f, 0.15f),
                         new Action(() => SpawnFromDatabase(capturedId)));
-                    CreateRowButton(rowObj.transform, "Origin", -166, -106, new Color(0.35f, 0.3f, 0.15f),
-                        new Action(() => SpawnFromDatabaseAtOrigin(capturedId)));
+                    CreateRowButton(rowObj.transform, "Preview", -166, -106, new Color(0.3f, 0.2f, 0.5f),
+                        new Action(() => ShowPreviewPanel(capturedId)));
                     CreateRowButton(rowObj.transform, "Ren", -102, -62, new Color(0.2f, 0.3f, 0.5f),
                         new Action(() => ShowRenameInput(capturedId)));
                     CreateRowButton(rowObj.transform, "X", -58, -6, new Color(0.5f, 0.15f, 0.15f),
@@ -247,7 +247,8 @@ namespace MeshVault.Tools
             }
         }
 
-        private void EnterPositioner(GameObject go, string dbId, Vector3 pos)
+        private void EnterPositioner(GameObject go, string dbId, Vector3 pos,
+            string[] materialOverrides = null, Color?[] colorOverrides = null)
         {
             CloseSpawnPanel();
 
@@ -269,6 +270,8 @@ namespace MeshVault.Tools
             _previewScale = Vector3.one;
             _previewIsLiveObject = false;
             _mode = EditMode.Position;
+            _positionerMaterialOverrides = materialOverrides;
+            _positionerColorOverrides = colorOverrides;
 
             _lastAction = $"Positioning \"{dbId}\" — numpad to adjust, Enter to log, Del to cancel";
         }

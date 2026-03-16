@@ -93,12 +93,12 @@ Melon<MeshVaultPlugin>.Logger.Error($"Failed to load: {ex.Message}");
 * Use `snake_case` for all IDs. Lowercase letters, digits, and underscores only.
 * IDs follow the pattern: `object_variant` or `object_location_variant` when context matters.
   ```
-  dumpster_blue
-  dumpster_green
-  bench_park_wood
+  dumpster
+  sofa_double
+  bench_park
   shelf_wall_small
   ```
-* **Color and material variations** must be described in the ID. Never store two visually different meshes under a generic name like `dumpster` — always qualify: `dumpster_blue`, `dumpster_rust`.
+* **Color and material variations** should NOT be separate database entries when the geometry is identical. Store one entry per unique geometry and use `materialOverrides` at spawn time. IDs describe the **geometry**, not the material: `sofa_double`, `dumpster`. Only add material qualifiers when the geometry itself differs (e.g. `fence_chain` vs `fence_wood` have different meshes).
 * **Size or type variations** use a suffix: `_small`, `_large`, `_tall`, `_wide`.
 * Numbered suffixes (`_01`, `_02`) are acceptable when objects are genuinely interchangeable variants of the same thing (e.g. `trash_bag_01`, `trash_bag_02`), but prefer descriptive names when the variants differ visually.
 
@@ -115,11 +115,16 @@ Melon<MeshVaultPlugin>.Logger.Error($"Failed to load: {ex.Message}");
 ### Naming Guidance
 | Pattern | Example | When to use |
 |---|---|---|
-| `object_color` | `mailbox_red`, `awning_green` | Color is the primary distinguishing trait |
-| `object_material` | `fence_chain`, `fence_wood` | Material/texture is the distinguishing trait |
+| `object` | `sofa_double`, `dumpster` | Default — one entry per unique geometry |
+| `object_material` | `fence_chain`, `fence_wood` | Geometry differs between material variants |
 | `object_location` | `sign_motel`, `sign_highway` | Object is specific to a location or context |
 | `object_size` | `planter_small`, `planter_large` | Same object in different scales |
 | `object_NN` | `rock_01`, `rock_02` | Interchangeable variants with no meaningful visual difference |
+
+### Material Overrides
+* Same geometry, different materials = one entry + `materialOverrides` at spawn time.
+* Override array indices: 0..N-1 = submeshes, N..N+M-1 = child meshes. Null entries keep the default material.
+* Mesh-specific materials (e.g. impostor textures) belong in the blacklist and are excluded from the material picker.
 
 ## What **NOT** to Do
 * Do not add S1API dependencies. Schedule1 namespaces are acceptable when needed.

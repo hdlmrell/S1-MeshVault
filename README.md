@@ -40,6 +40,20 @@ MeshEntry entry = MeshVaultAPI.GetMesh("streetlight_01");
 
 The API handles mesh construction, multi-submesh materials, baked texture lookups, scene material matching, and child mesh attachment automatically.
 
+### Material overrides
+
+Instead of storing duplicate database entries for color/material variants of the same geometry, MeshVault supports per-slot material overrides at spawn time. The `materialOverrides` array maps positionally to submeshes and then child meshes — null entries keep the default material.
+
+```csharp
+// Override submesh 1's material, keep everything else default
+var go = MeshVaultAPI.Spawn("sofa_double", position, rotation,
+    materialOverrides: new[] { null, "leather_black" });
+
+// Override both submeshes
+var go2 = MeshVaultAPI.Spawn("sofa_double", position, rotation,
+    materialOverrides: new[] { "carpet red mat", "wood_dark" });
+```
+
 ## Build configurations
 
 MeshVault has three build configurations:

@@ -91,7 +91,7 @@
 	</Target>
 
 	<!-- Post-build: copy to r2modman profile Plugins folder (Debug configs only) -->
-	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Debug'">
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Debug' OR '$(Configuration)' == 'Release'">
 		<Exec Command="COPY &quot;$(TargetPath)&quot; &quot;$(PluginOutputPath)&quot;" />
 	</Target>
 	<Target Name="PostBuildMono" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'MonoDebug'">
