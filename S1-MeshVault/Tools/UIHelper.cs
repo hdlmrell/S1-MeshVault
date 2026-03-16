@@ -2,6 +2,7 @@
 using System;
 using UnityEngine;
 using UnityEngine.Events;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 #if IL2CPP
@@ -107,9 +108,19 @@ namespace MeshVault.Tools
             viewportRT.offsetMin = Vector2.zero;
             viewportRT.offsetMax = Vector2.zero;
 
+            // Transparent image gives the viewport a raycast target so ScrollRect
+            // receives wheel events anywhere in the viewport, not just over child rows.
+            var viewportImg = viewportGO.AddComponent<Image>();
+            viewportImg.color = new Color(0, 0, 0, 0);
+            viewportImg.raycastTarget = true;
             viewportGO.AddComponent<RectMask2D>();
 
             scrollRect.viewport = viewportRT;
+            scrollRect.movementType = ScrollRect.MovementType.Elastic;
+            scrollRect.elasticity = 0.08f;
+            scrollRect.inertia = true;
+            scrollRect.decelerationRate = 0.06f;
+            scrollRect.scrollSensitivity = 12f;
 
             // Content
             var contentGO = new GameObject("Content");
@@ -217,6 +228,26 @@ namespace MeshVault.Tools
             var border = new Vector4(8, 8, 8, 8);
             _roundedSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, border);
             return _roundedSprite;
+        }
+    }
+
+    /// <summary>
+    /// Forwards scroll events to the nearest parent ScrollRect so that
+    /// buttons and other interactive elements don't swallow mouse wheel input.
+    /// </summary>
+    internal class ScrollForwarder : MonoBehaviour, IScrollHandler
+    {
+        private ScrollRect _parentScroll;
+
+        private void Awake()
+        {
+            _parentScroll = GetComponentInParent<ScrollRect>();
+        }
+
+        public void OnScroll(PointerEventData eventData)
+        {
+            if (_parentScroll != null)
+                _parentScroll.OnScroll(eventData);
         }
     }
 

@@ -45,6 +45,7 @@ namespace MeshVault.Tools
         // Hierarchy picker
         private GameObject _hierarchyPanel;
         private List<(Transform node, int depth, bool hasMesh)> _hierarchyNodes;
+        private Dictionary<Transform, bool> _hierarchyChecked;
         private Transform _highlightedNode;
 
         // Preview

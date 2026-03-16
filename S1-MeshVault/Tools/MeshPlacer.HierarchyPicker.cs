@@ -284,6 +284,7 @@ namespace MeshVault.Tools
 
             const int maxTotalNodes = 30;
             _hierarchyNodes = new List<(Transform, int, bool)>();
+            _hierarchyChecked = new Dictionary<Transform, bool>();
             int baseDepth = 0;
             foreach (var ancestor in ancestors)
             {
@@ -465,8 +466,51 @@ namespace MeshVault.Tools
 
             var rowBg = rowObj.AddComponent<Image>();
             rowBg.color = hasMesh ? new Color(0.22f, 0.22f, 0.28f) : new Color(0.16f, 0.16f, 0.2f);
+            rowObj.AddComponent<ScrollForwarder>();
 
-            int leftPad = 8 + depth * 10;
+            const int checkboxSize = 20;
+            const int checkboxPad = 26;
+
+            // Checkbox for mesh rows
+            if (hasMesh)
+            {
+                _hierarchyChecked[node] = true;
+
+                var cbObj = new GameObject("Checkbox");
+                cbObj.transform.SetParent(rowObj.transform, false);
+                var cbRect = cbObj.AddComponent<RectTransform>();
+                cbRect.anchorMin = new Vector2(0, 0.5f);
+                cbRect.anchorMax = new Vector2(0, 0.5f);
+                cbRect.pivot = new Vector2(0, 0.5f);
+                cbRect.sizeDelta = new Vector2(checkboxSize, checkboxSize);
+                cbRect.anchoredPosition = new Vector2(4 + depth * 10, 0);
+                var cbBg = cbObj.AddComponent<Image>();
+                cbBg.color = new Color(0.12f, 0.12f, 0.15f);
+
+                var checkObj = new GameObject("Checkmark");
+                checkObj.transform.SetParent(cbObj.transform, false);
+                var checkRect = checkObj.AddComponent<RectTransform>();
+                checkRect.anchorMin = new Vector2(0.15f, 0.15f);
+                checkRect.anchorMax = new Vector2(0.85f, 0.85f);
+                checkRect.offsetMin = Vector2.zero;
+                checkRect.offsetMax = Vector2.zero;
+                var checkImg = checkObj.AddComponent<Image>();
+                checkImg.color = new Color(0.4f, 0.8f, 0.45f);
+
+                // Toggle behavior via Button click
+                Transform capturedNodeCb = node;
+                var cbBtn = cbObj.AddComponent<Button>();
+                cbBtn.targetGraphic = cbBg;
+                cbObj.AddComponent<ScrollForwarder>();
+                cbBtn.onClick.AddListener(new Action(() =>
+                {
+                    bool current = _hierarchyChecked.ContainsKey(capturedNodeCb) && _hierarchyChecked[capturedNodeCb];
+                    _hierarchyChecked[capturedNodeCb] = !current;
+                    checkImg.color = !current ? new Color(0.4f, 0.8f, 0.45f) : new Color(0.25f, 0.25f, 0.3f);
+                }));
+            }
+
+            int leftPad = 8 + depth * 10 + checkboxPad;
             int btnW = 72;
             int btnGap = 4;
             int rightZone = hasMesh ? (btnW * btnCount + btnGap * (btnCount - 1) + 8) : 4;
@@ -577,6 +621,7 @@ namespace MeshVault.Tools
             var bg = btnObj.AddComponent<Image>();
             bg.color = normal;
             var btn = btnObj.AddComponent<Button>();
+            btnObj.AddComponent<ScrollForwarder>();
             var colors = btn.colors;
             colors.normalColor = normal;
             colors.highlightedColor = highlighted;
@@ -607,6 +652,7 @@ namespace MeshVault.Tools
                 _hierarchyPanel = null;
             }
             _hierarchyNodes = null;
+            _hierarchyChecked = null;
             ClearHighlight();
 
             var cam = PlayerSingleton<PlayerCamera>.Instance;
@@ -901,13 +947,16 @@ namespace MeshVault.Tools
 
                 var directMF = node.GetComponent<MeshFilter>();
                 var directMR = node.GetComponent<MeshRenderer>();
-                if (directMF != null && directMR != null && IsExtractableChildMesh(directMF.sharedMesh))
+                bool parentChecked = _hierarchyChecked == null || !_hierarchyChecked.TryGetValue(node, out bool pc) || pc;
+                if (parentChecked && directMF != null && directMR != null && IsExtractableChildMesh(directMF.sharedMesh))
                     candidates.Add((directMF, directMR, directMF.sharedMesh.name.Contains("Combined Mesh")));
 
                 int childCount = Mathf.Min(node.childCount, 50);
                 for (int c = 0; c < childCount; c++)
                 {
                     var child = node.GetChild(c);
+                    if (_hierarchyChecked != null && _hierarchyChecked.TryGetValue(child, out bool isChecked) && !isChecked)
+                        continue;
                     var cmf = child.GetComponent<MeshFilter>();
                     var cmr = child.GetComponent<MeshRenderer>();
                     if (cmf == null || cmr == null || !IsExtractableChildMesh(cmf.sharedMesh)) continue;
