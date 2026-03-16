@@ -1,0 +1,20 @@
+<Project>
+	<PropertyGroup>
+		<!-- IL2CPP game DLL paths -->
+		<ManagedDllPath>C:\path\to\r2modman\profiles\Default\BepInEx\interop</ManagedDllPath>
+		<BetaIl2CppDllPath>C:\path\to\r2modman\profiles\BetaProfile\BepInEx\interop</BetaIl2CppDllPath>
+		<MelonLoaderNet6Path>C:\path\to\r2modman\profiles\Default\MelonLoader\net6</MelonLoaderNet6Path>
+
+		<!-- Mono game DLL paths -->
+		<MonoManagedDllPath>C:\path\to\r2modman\profiles\MonoProfile\MelonLoader\Managed</MonoManagedDllPath>
+		<BetaMonoDllPath>C:\path\to\r2modman\profiles\MonoBetaProfile\MelonLoader\Managed</BetaMonoDllPath>
+		<MonoMelonLoaderPath>C:\path\to\r2modman\profiles\MonoProfile\MelonLoader</MonoMelonLoaderPath>
+
+		<!-- Post-build copy destinations (debug builds only) -->
+		<PluginOutputPath>C:\path\to\r2modman\profiles\Default\Plugins</PluginOutputPath>
+		<MonoPluginOutputPath>C:\path\to\r2modman\profiles\MonoProfile\Plugins</MonoPluginOutputPath>
+
+		<!-- MeshDatabase.json source for release builds -->
+		<MeshDatabaseSourcePath>C:\path\to\game\UserData\MeshVault\MeshDatabase.json</MeshDatabaseSourcePath>
+	</PropertyGroup>
+</Project>

@@ -1,0 +1,100 @@
+<Project Sdk="Microsoft.NET.Sdk">
+	<Import Project="LocalPaths.targets" Condition="Exists('LocalPaths.targets')" />
+
+	<PropertyGroup>
+		<Configurations>Debug;Release;MonoDebug;MonoRelease</Configurations>
+		<Nullable>disable</Nullable>
+		<RootNamespace>MeshVault</RootNamespace>
+		<LangVersion>latest</LangVersion>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<IsPackable>false</IsPackable>
+		<AssemblyVersion>1.0.0.0</AssemblyVersion>
+		<FileVersion>1.0.0.0</FileVersion>
+		<NeutralLanguage>en-US</NeutralLanguage>
+		<AssemblyName>MeshVault</AssemblyName> <!-- overridden per-config below -->
+		<GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+		<AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+		<NoWarn>$(NoWarn);CS1705;MSB3277</NoWarn>
+	</PropertyGroup>
+
+	<!-- Beta build toggle: dotnet build -p:BetaBuild=true (default true) -->
+	<PropertyGroup>
+		<BetaBuild Condition="'$(BetaBuild)' == ''">true</BetaBuild>
+	</PropertyGroup>
+
+	<!-- IL2CPP builds (Debug / Release) -->
+	<PropertyGroup Condition="!$(Configuration.StartsWith('Mono'))">
+		<TargetFramework>net6.0</TargetFramework>
+		<DefineConstants>$(DefineConstants);IL2CPP</DefineConstants>
+		<GameDllPath Condition="'$(BetaBuild)' != 'true'">$(ManagedDllPath)</GameDllPath>
+		<GameDllPath Condition="'$(BetaBuild)' == 'true'">$(BetaIl2CppDllPath)</GameDllPath>
+		<MLPath>$(MelonLoaderNet6Path)</MLPath>
+		<AssemblyName>MeshVault.Il2Cpp</AssemblyName>
+	</PropertyGroup>
+
+	<!-- Mono builds (MonoDebug / MonoRelease) -->
+	<PropertyGroup Condition="$(Configuration.StartsWith('Mono'))">
+		<TargetFramework>netstandard2.1</TargetFramework>
+		<GameDllPath Condition="'$(BetaBuild)' != 'true'">$(MonoManagedDllPath)</GameDllPath>
+		<GameDllPath Condition="'$(BetaBuild)' == 'true'">$(BetaMonoDllPath)</GameDllPath>
+		<MLPath>$(MonoMelonLoaderPath)</MLPath>
+		<AssemblyName>MeshVault.Mono</AssemblyName>
+	</PropertyGroup>
+
+	<!-- MonoDebug: add DEBUG constant -->
+	<PropertyGroup Condition="'$(Configuration)' == 'MonoDebug'">
+		<DefineConstants>$(DefineConstants);DEBUG</DefineConstants>
+	</PropertyGroup>
+
+	<!-- Shared references (same filenames in both IL2CPP and Mono) -->
+	<ItemGroup>
+		<Reference Include="UnityEngine"><HintPath>$(GameDllPath)\UnityEngine.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.CoreModule"><HintPath>$(GameDllPath)\UnityEngine.CoreModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.PhysicsModule"><HintPath>$(GameDllPath)\UnityEngine.PhysicsModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.IMGUIModule"><HintPath>$(GameDllPath)\UnityEngine.IMGUIModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.UIModule"><HintPath>$(GameDllPath)\UnityEngine.UIModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.UI"><HintPath>$(GameDllPath)\UnityEngine.UI.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.InputLegacyModule"><HintPath>$(GameDllPath)\UnityEngine.InputLegacyModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(GameDllPath)\UnityEngine.ImageConversionModule.dll</HintPath></Reference>
+		<Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(GameDllPath)\UnityEngine.TextRenderingModule.dll</HintPath></Reference>
+		<Reference Include="Unity.TextMeshPro"><HintPath>$(GameDllPath)\Unity.TextMeshPro.dll</HintPath></Reference>
+		<Reference Include="MelonLoader"><HintPath>$(MLPath)\MelonLoader.dll</HintPath></Reference>
+		<Reference Include="Assembly-CSharp"><HintPath>$(GameDllPath)\Assembly-CSharp.dll</HintPath></Reference>
+	</ItemGroup>
+
+	<!-- IL2CPP-only references -->
+	<ItemGroup Condition="!$(Configuration.StartsWith('Mono'))">
+		<Reference Include="Il2CppInterop.Runtime"><HintPath>$(MLPath)\Il2CppInterop.Runtime.dll</HintPath></Reference>
+		<Reference Include="Il2Cppmscorlib"><HintPath>$(GameDllPath)\Il2Cppmscorlib.dll</HintPath></Reference>
+	</ItemGroup>
+
+	<!-- Beta-only: ScheduleOne.Core assembly (split from Assembly-CSharp in game 0.4.4) -->
+	<ItemGroup Condition="!$(Configuration.StartsWith('Mono')) AND '$(BetaBuild)' == 'true'">
+		<Reference Include="Il2CppScheduleOne.Core"><HintPath>$(GameDllPath)\Il2CppScheduleOne.Core.dll</HintPath></Reference>
+	</ItemGroup>
+	<ItemGroup Condition="$(Configuration.StartsWith('Mono')) AND '$(BetaBuild)' == 'true'">
+		<Reference Include="ScheduleOne.Core"><HintPath>$(GameDllPath)\ScheduleOne.Core.dll</HintPath></Reference>
+	</ItemGroup>
+
+	<!-- Embed the mesh database so release builds ship with a built-in copy -->
+	<ItemGroup>
+		<EmbeddedResource Include="Resources\MeshDatabase.json" LogicalName="MeshVault.Resources.MeshDatabase.json" />
+	</ItemGroup>
+
+	<!-- Pre-build: copy latest MeshDatabase.json into Resources for release builds -->
+	<Target Name="UpdateMeshDatabase" BeforeTargets="BeforeBuild"
+			Condition="'$(Configuration)' == 'Release' OR '$(Configuration)' == 'MonoRelease'">
+		<Error Condition="!Exists('$(MeshDatabaseSourcePath)')"
+			   Text="MeshDatabase.json not found at $(MeshDatabaseSourcePath). Extract meshes in a debug build first, or update MeshDatabaseSourcePath in LocalPaths.targets." />
+		<Copy SourceFiles="$(MeshDatabaseSourcePath)" DestinationFiles="Resources\MeshDatabase.json" />
+		<Message Importance="high" Text="Copied MeshDatabase.json from $(MeshDatabaseSourcePath)" />
+	</Target>
+
+	<!-- Post-build: copy to r2modman profile Plugins folder (Debug configs only) -->
+	<Target Name="PostBuild" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'Debug'">
+		<Exec Command="COPY &quot;$(TargetPath)&quot; &quot;$(PluginOutputPath)&quot;" />
+	</Target>
+	<Target Name="PostBuildMono" AfterTargets="PostBuildEvent" Condition="'$(Configuration)' == 'MonoDebug'">
+		<Exec Command="COPY &quot;$(TargetPath)&quot; &quot;$(MonoPluginOutputPath)\&quot;" />
+	</Target>
+</Project>
