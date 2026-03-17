@@ -716,6 +716,61 @@ namespace MeshVault.Tools
         }
 
 #if !IL2CPP
+        /// <summary>
+        /// Converts an IEEE 754 half-precision (16-bit) float to a single-precision float.
+        /// </summary>
+        private static float HalfToFloat(ushort half)
+        {
+            int sign = (half >> 15) & 1;
+            int exp = (half >> 10) & 0x1F;
+            int mantissa = half & 0x3FF;
+
+            float value;
+            if (exp == 0)
+                value = mantissa == 0 ? 0f : (float)(mantissa / 1024.0 * Math.Pow(2, -14));
+            else if (exp == 31)
+                value = mantissa == 0 ? float.PositiveInfinity : float.NaN;
+            else
+                value = (float)((1.0 + mantissa / 1024.0) * Math.Pow(2, exp - 15));
+
+            return sign == 1 ? -value : value;
+        }
+
+        /// <summary>
+        /// Reads a single float component from a byte buffer, interpreting the data
+        /// according to the given vertex attribute format.
+        /// </summary>
+        private static float ReadComponent(byte[] data, int offset, VertexAttributeFormat fmt)
+        {
+            switch (fmt)
+            {
+                case VertexAttributeFormat.Float32: return BitConverter.ToSingle(data, offset);
+                case VertexAttributeFormat.Float16: return HalfToFloat(BitConverter.ToUInt16(data, offset));
+                case VertexAttributeFormat.UNorm8:  return data[offset] / 255f;
+                case VertexAttributeFormat.SNorm8:  return Math.Max((sbyte)data[offset] / 127f, -1f);
+                case VertexAttributeFormat.UNorm16: return BitConverter.ToUInt16(data, offset) / 65535f;
+                case VertexAttributeFormat.SNorm16: return BitConverter.ToInt16(data, offset) / 32767f;
+                default: return 0f;
+            }
+        }
+
+        /// <summary>
+        /// Returns the byte size of a single component for the given vertex attribute format.
+        /// </summary>
+        private static int FormatByteSize(VertexAttributeFormat fmt)
+        {
+            switch (fmt)
+            {
+                case VertexAttributeFormat.Float32: return 4;
+                case VertexAttributeFormat.Float16:
+                case VertexAttributeFormat.UNorm16:
+                case VertexAttributeFormat.SNorm16: return 2;
+                case VertexAttributeFormat.UNorm8:
+                case VertexAttributeFormat.SNorm8:  return 1;
+                default: return 4;
+            }
+        }
+
         private static bool ReadMeshNative(Mesh mesh,
             out Vector3[] verts, out Vector3[] normals, out Vector2[] uvs, out List<int[]> submeshTris)
         {
@@ -724,40 +779,107 @@ namespace MeshVault.Tools
             int vertCount = mesh.vertexCount;
             if (vertCount == 0) return false;
 
-            int stride = mesh.GetVertexBufferStride(0);
+            // Resolve which vertex buffer stream each attribute lives in and its format
+            int posStream = mesh.GetVertexAttributeStream(VertexAttribute.Position);
             int posOffset = mesh.GetVertexAttributeOffset(VertexAttribute.Position);
-            bool hasNormal = mesh.HasVertexAttribute(VertexAttribute.Normal);
-            int normOffset = hasNormal ? mesh.GetVertexAttributeOffset(VertexAttribute.Normal) : 0;
-            bool hasUV = mesh.HasVertexAttribute(VertexAttribute.TexCoord0);
-            int uvOffset = hasUV ? mesh.GetVertexAttributeOffset(VertexAttribute.TexCoord0) : 0;
+            var posFmt = mesh.GetVertexAttributeFormat(VertexAttribute.Position);
+            int posBpc = FormatByteSize(posFmt);
+            if (posStream < 0) return false;
 
-            GraphicsBuffer vb = mesh.GetVertexBuffer(0);
-            if (vb == null) return false;
-            byte[] rawVerts = new byte[vb.count * vb.stride];
-            vb.GetData(rawVerts);
-            vb.Release();
+            bool hasNormal = mesh.HasVertexAttribute(VertexAttribute.Normal);
+            int normStream = hasNormal ? mesh.GetVertexAttributeStream(VertexAttribute.Normal) : -1;
+            int normOffset = hasNormal ? mesh.GetVertexAttributeOffset(VertexAttribute.Normal) : 0;
+            VertexAttributeFormat normFmt = default;
+            int normBpc = 0;
+            if (hasNormal && normStream >= 0)
+            {
+                normFmt = mesh.GetVertexAttributeFormat(VertexAttribute.Normal);
+                normBpc = FormatByteSize(normFmt);
+            }
+            else hasNormal = false;
+
+            bool hasUV = mesh.HasVertexAttribute(VertexAttribute.TexCoord0);
+            int uvStream = hasUV ? mesh.GetVertexAttributeStream(VertexAttribute.TexCoord0) : -1;
+            int uvOffset = hasUV ? mesh.GetVertexAttributeOffset(VertexAttribute.TexCoord0) : 0;
+            VertexAttributeFormat uvFmt = default;
+            int uvBpc = 0;
+            if (hasUV && uvStream >= 0)
+            {
+                uvFmt = mesh.GetVertexAttributeFormat(VertexAttribute.TexCoord0);
+                uvBpc = FormatByteSize(uvFmt);
+            }
+            else hasUV = false;
+
+            // Collect unique stream indices we need to read
+            var streamsNeeded = new HashSet<int> { posStream };
+            if (hasNormal) streamsNeeded.Add(normStream);
+            if (hasUV) streamsNeeded.Add(uvStream);
+
+            var streamData = new Dictionary<int, byte[]>();
+            var streamStride = new Dictionary<int, int>();
+            foreach (int s in streamsNeeded)
+            {
+                int stride = mesh.GetVertexBufferStride(s);
+                GraphicsBuffer vb = mesh.GetVertexBuffer(s);
+                if (vb == null)
+                {
+                    if (s == posStream) return false;
+                    continue;
+                }
+                byte[] data = new byte[vb.count * vb.stride];
+                vb.GetData(data);
+                vb.Release();
+                streamData[s] = data;
+                streamStride[s] = stride;
+            }
+
+            // Disable attributes whose stream failed to load
+            if (hasNormal && !streamData.ContainsKey(normStream)) hasNormal = false;
+            if (hasUV && !streamData.ContainsKey(uvStream)) hasUV = false;
 
             verts = new Vector3[vertCount];
             normals = new Vector3[vertCount];
             uvs = new Vector2[vertCount];
+
+            byte[] posData = streamData[posStream];
+            int posStride = streamStride[posStream];
+            byte[] normData = hasNormal ? streamData[normStream] : null;
+            int nStride = hasNormal ? streamStride[normStream] : 0;
+            byte[] uvData = hasUV ? streamData[uvStream] : null;
+            int uStride = hasUV ? streamStride[uvStream] : 0;
+
             for (int i = 0; i < vertCount; i++)
             {
-                int b = i * stride;
+                int bp = i * posStride + posOffset;
                 verts[i] = new Vector3(
-                    BitConverter.ToSingle(rawVerts, b + posOffset),
-                    BitConverter.ToSingle(rawVerts, b + posOffset + 4),
-                    BitConverter.ToSingle(rawVerts, b + posOffset + 8));
-                normals[i] = hasNormal
-                    ? new Vector3(
-                        BitConverter.ToSingle(rawVerts, b + normOffset),
-                        BitConverter.ToSingle(rawVerts, b + normOffset + 4),
-                        BitConverter.ToSingle(rawVerts, b + normOffset + 8))
-                    : Vector3.up;
-                uvs[i] = hasUV
-                    ? new Vector2(
-                        BitConverter.ToSingle(rawVerts, b + uvOffset),
-                        BitConverter.ToSingle(rawVerts, b + uvOffset + 4))
-                    : Vector2.zero;
+                    ReadComponent(posData, bp, posFmt),
+                    ReadComponent(posData, bp + posBpc, posFmt),
+                    ReadComponent(posData, bp + posBpc * 2, posFmt));
+
+                if (hasNormal)
+                {
+                    int bn = i * nStride + normOffset;
+                    normals[i] = new Vector3(
+                        ReadComponent(normData, bn, normFmt),
+                        ReadComponent(normData, bn + normBpc, normFmt),
+                        ReadComponent(normData, bn + normBpc * 2, normFmt));
+                }
+                else
+                {
+                    normals[i] = Vector3.up;
+                }
+
+                if (hasUV)
+                {
+                    int bu = i * uStride + uvOffset;
+                    uvs[i] = new Vector2(
+                        ReadComponent(uvData, bu, uvFmt),
+                        ReadComponent(uvData, bu + uvBpc, uvFmt));
+                }
+                else
+                {
+                    uvs[i] = Vector2.zero;
+                }
             }
 
             GraphicsBuffer ib = mesh.GetIndexBuffer();
@@ -779,13 +901,15 @@ namespace MeshVault.Tools
             {
                 int count = (int)subDescs[s].indexCount;
                 int start = (int)subDescs[s].indexStart;
+                int baseVtx = (int)subDescs[s].baseVertex;
                 var tris = new int[count];
                 for (int j = 0; j < count; j++)
                 {
                     int byteOff = (start + j) * bytesPerIdx;
-                    tris[j] = use32
+                    int idx = use32
                         ? BitConverter.ToInt32(rawIdx, byteOff)
                         : (int)BitConverter.ToUInt16(rawIdx, byteOff);
+                    tris[j] = idx + baseVtx;
                 }
                 submeshTris.Add(tris);
             }

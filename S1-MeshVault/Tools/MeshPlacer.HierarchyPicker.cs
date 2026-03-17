@@ -24,6 +24,21 @@ namespace MeshVault.Tools
 {
     public partial class MeshPlacer
     {
+        private static readonly System.Text.RegularExpressions.Regex _lodFilter =
+            new System.Text.RegularExpressions.Regex(@"(LOD|_lod)[1-9]", System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex _cubeNumbered =
+            new System.Text.RegularExpressions.Regex(@"^Cube\s*\(\d+\)$", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        /// <summary>
+        /// Returns true if a node name should be auto-excluded (unchecked) from Save All extraction.
+        /// Matches LOD1+, colliders, and cubes.
+        /// </summary>
+        private static bool ShouldAutoExclude(string name) =>
+            _lodFilter.IsMatch(name)
+            || name.IndexOf("Collider", StringComparison.OrdinalIgnoreCase) >= 0
+            || name.Equals("Cube", StringComparison.OrdinalIgnoreCase)
+            || _cubeNumbered.IsMatch(name);
+
         private void RaycastInspect()
         {
             try
@@ -271,38 +286,20 @@ namespace MeshVault.Tools
 
             var hitT = hit.collider.transform;
 
-            var ancestors = new List<Transform>();
+            _hierarchyAncestors = new List<Transform>();
             var t = hitT;
             for (int i = 0; i < 3 && t != null; i++)
             {
                 if (t != hitT && t.childCount > 50)
                     break;
-                ancestors.Add(t);
+                _hierarchyAncestors.Add(t);
                 t = t.parent;
             }
-            ancestors.Reverse();
+            _hierarchyAncestors.Reverse();
 
-            const int maxTotalNodes = 30;
-            _hierarchyNodes = new List<(Transform, int, bool)>();
             _hierarchyChecked = new Dictionary<Transform, bool>();
-            int baseDepth = 0;
-            foreach (var ancestor in ancestors)
-            {
-                if (_hierarchyNodes.Count >= maxTotalNodes) break;
-
-                bool hasMesh = HasUsableMesh(ancestor);
-                _hierarchyNodes.Add((ancestor, baseDepth, hasMesh));
-
-                int childCount = Mathf.Min(ancestor.childCount, 15);
-                for (int c = 0; c < childCount && _hierarchyNodes.Count < maxTotalNodes; c++)
-                {
-                    var child = ancestor.GetChild(c);
-                    if (child == null || ancestors.Contains(child)) continue;
-                    bool childHasMesh = HasUsableMesh(child);
-                    _hierarchyNodes.Add((child, baseDepth + 1, childHasMesh));
-                }
-                baseDepth++;
-            }
+            _hierarchyExpanded = new HashSet<Transform>(_hierarchyAncestors);
+            BuildFlatNodeList();
 
             // Build UI panel
             _hierarchyPanel = new GameObject("MV_HierarchyPanel");
@@ -334,7 +331,9 @@ namespace MeshVault.Tools
             titleRect.anchoredPosition = new Vector2(0, -5);
             titleRect.sizeDelta = new Vector2(0, 28);
 
-            var listContent = UIHelper.ScrollableVerticalList("HierarchyList", panelObj.transform, out ScrollRect scrollRect);
+            var listContentGO = UIHelper.ScrollableVerticalList("HierarchyList", panelObj.transform, out ScrollRect scrollRect);
+            _hierarchyListContent = listContentGO.transform;
+            var listContent = listContentGO;
             var scrollRectTransform = scrollRect.GetComponent<RectTransform>();
             scrollRectTransform.anchorMin = new Vector2(0, 0);
             scrollRectTransform.anchorMax = new Vector2(1, 1);
@@ -369,15 +368,7 @@ namespace MeshVault.Tools
                 contentLayout.childForceExpandWidth = true;
             }
 
-            for (int i = 0; i < _hierarchyNodes.Count; i++)
-            {
-                var (node, depth, hasMesh) = _hierarchyNodes[i];
-                CreateHierarchyRow(listContent, node, depth, hasMesh);
-            }
-
-            var contentRT = listContent.GetComponent<RectTransform>();
-            if (contentRT != null)
-                LayoutRebuilder.ForceRebuildLayoutImmediate(contentRT);
+            RebuildHierarchyList();
 
             var (closeMask, closeBtn, closeLabel) = UIHelper.RoundedButtonWithLabel(
                 "CloseBtn", "Close (Del)", panelObj.transform,
@@ -442,10 +433,131 @@ namespace MeshVault.Tools
             int checkCount = Mathf.Min(t.childCount, 50);
             for (int c = 0; c < checkCount; c++)
             {
-                var cmf = t.GetChild(c).GetComponent<MeshFilter>();
+                var child = t.GetChild(c);
+                var cmf = child.GetComponent<MeshFilter>();
                 if (cmf != null && IsExtractableChildMesh(cmf.sharedMesh)) return true;
+                if (HasValidChildMeshes(child)) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// Recursively collects all extractable (MeshFilter, MeshRenderer) pairs from a node's
+        /// descendants, skipping LOD variants and unchecked nodes.
+        /// </summary>
+        private void CollectExtractableMeshes(Transform node,
+            List<(MeshFilter mf, MeshRenderer mr, bool isCombined)> candidates)
+        {
+            int childCount = Mathf.Min(node.childCount, 50);
+            for (int c = 0; c < childCount; c++)
+            {
+                var child = node.GetChild(c);
+
+                // If checkbox state exists, respect it; otherwise apply auto-filter
+                if (_hierarchyChecked != null && _hierarchyChecked.TryGetValue(child, out bool isChecked))
+                {
+                    if (!isChecked) continue;
+                }
+                else
+                {
+                    if (ShouldAutoExclude(child.gameObject.name))
+                        continue;
+                }
+
+                var cmf = child.GetComponent<MeshFilter>();
+                var cmr = child.GetComponent<MeshRenderer>();
+                if (cmf != null && cmr != null && IsExtractableChildMesh(cmf.sharedMesh))
+                    candidates.Add((cmf, cmr, cmf.sharedMesh.name.Contains("Combined Mesh")));
+
+                // Recurse into children
+                CollectExtractableMeshes(child, candidates);
+            }
+        }
+
+        /// <summary>
+        /// Builds the flat _hierarchyNodes list from the ancestor spine + expanded children.
+        /// Ancestors are always shown; their children appear when the ancestor is in _hierarchyExpanded.
+        /// Non-ancestor nodes show children only when explicitly expanded.
+        /// </summary>
+        private void BuildFlatNodeList()
+        {
+            _hierarchyNodes = new List<(Transform, int, bool)>();
+            if (_hierarchyAncestors == null || _hierarchyAncestors.Count == 0) return;
+
+            int baseDepth = 0;
+            for (int a = 0; a < _hierarchyAncestors.Count; a++)
+            {
+                var ancestor = _hierarchyAncestors[a];
+                bool hasMesh = HasUsableMesh(ancestor);
+                _hierarchyNodes.Add((ancestor, baseDepth, hasMesh));
+
+                bool isExpanded = _hierarchyExpanded != null && _hierarchyExpanded.Contains(ancestor);
+                if (isExpanded)
+                {
+                    int childCount = Mathf.Min(ancestor.childCount, 15);
+                    for (int c = 0; c < childCount; c++)
+                    {
+                        if (_hierarchyNodes.Count >= 80) break;
+                        var child = ancestor.GetChild(c);
+                        if (child == null || _hierarchyAncestors.Contains(child)) continue;
+
+                        bool childHasMesh = HasUsableMesh(child);
+                        _hierarchyNodes.Add((child, baseDepth + 1, childHasMesh));
+
+                        if (_hierarchyExpanded != null && _hierarchyExpanded.Contains(child))
+                            AddExpandedChildren(child, baseDepth + 2);
+                    }
+                }
+                baseDepth++;
+            }
+        }
+
+        /// <summary>
+        /// Recursively adds children of an expanded non-ancestor node to _hierarchyNodes.
+        /// </summary>
+        private void AddExpandedChildren(Transform node, int depth)
+        {
+            int childCount = Mathf.Min(node.childCount, 15);
+            for (int c = 0; c < childCount; c++)
+            {
+                if (_hierarchyNodes.Count >= 80) return;
+                var child = node.GetChild(c);
+                if (child == null) continue;
+
+                bool hasMesh = HasUsableMesh(child);
+                _hierarchyNodes.Add((child, depth, hasMesh));
+
+                if (_hierarchyExpanded != null && _hierarchyExpanded.Contains(child))
+                    AddExpandedChildren(child, depth + 1);
+            }
+        }
+
+        /// <summary>
+        /// Destroys all current hierarchy rows and rebuilds from _hierarchyNodes.
+        /// Preserves checkbox state across rebuilds.
+        /// </summary>
+        private void RebuildHierarchyList()
+        {
+            if (_hierarchyListContent == null) return;
+
+            // Destroy existing rows
+            for (int i = _hierarchyListContent.childCount - 1; i >= 0; i--)
+                UnityEngine.Object.Destroy(_hierarchyListContent.GetChild(i).gameObject);
+
+            // Rebuild node list from tree state
+            BuildFlatNodeList();
+
+            // Create rows
+            for (int i = 0; i < _hierarchyNodes.Count; i++)
+            {
+                var (node, depth, hasMesh) = _hierarchyNodes[i];
+                CreateHierarchyRow(_hierarchyListContent, node, depth, hasMesh);
+            }
+
+            // Force layout rebuild
+            var contentRT = _hierarchyListContent.GetComponent<RectTransform>();
+            if (contentRT != null)
+                LayoutRebuilder.ForceRebuildLayoutImmediate(contentRT);
         }
 
         private void CreateHierarchyRow(Transform parent, Transform node, int depth, bool hasMesh)
@@ -468,13 +580,64 @@ namespace MeshVault.Tools
             rowBg.color = hasMesh ? new Color(0.22f, 0.22f, 0.28f) : new Color(0.16f, 0.16f, 0.2f);
             rowObj.AddComponent<ScrollForwarder>();
 
+            bool hasChildren = node.childCount > 0;
+            const int arrowSize = 18;
+            const int arrowPadding = 20; // space taken by arrow column
             const int checkboxSize = 20;
             const int checkboxPad = 26;
+            int arrowOffset = arrowPadding; // always reserve arrow column for consistent indentation
+
+            // Expand/collapse arrow for nodes with children
+            if (hasChildren)
+            {
+                bool isExpanded = _hierarchyExpanded != null && _hierarchyExpanded.Contains(node);
+
+                var arrowObj = new GameObject("ExpandArrow");
+                arrowObj.transform.SetParent(rowObj.transform, false);
+                var arrowRect = arrowObj.AddComponent<RectTransform>();
+                arrowRect.anchorMin = new Vector2(0, 0.5f);
+                arrowRect.anchorMax = new Vector2(0, 0.5f);
+                arrowRect.pivot = new Vector2(0, 0.5f);
+                arrowRect.sizeDelta = new Vector2(arrowSize, arrowSize);
+                arrowRect.anchoredPosition = new Vector2(4 + depth * 10, 0);
+
+                var arrowBg = arrowObj.AddComponent<Image>();
+                arrowBg.color = new Color(0, 0, 0, 0); // transparent clickable area
+
+                var arrowLabel = new GameObject("ArrowLabel");
+                arrowLabel.transform.SetParent(arrowObj.transform, false);
+                var arrowLabelRect = arrowLabel.AddComponent<RectTransform>();
+                arrowLabelRect.anchorMin = Vector2.zero;
+                arrowLabelRect.anchorMax = Vector2.one;
+                arrowLabelRect.offsetMin = Vector2.zero;
+                arrowLabelRect.offsetMax = Vector2.zero;
+                var arrowTmp = arrowLabel.AddComponent<TextMeshProUGUI>();
+                arrowTmp.text = "\u25BC";
+                arrowTmp.fontSize = 11;
+                arrowTmp.color = new Color(0.6f, 0.6f, 0.65f);
+                arrowTmp.alignment = TextAlignmentOptions.Center;
+                if (!isExpanded)
+                    arrowLabelRect.localRotation = Quaternion.Euler(0, 0, 90);
+
+                Transform capturedNodeArrow = node;
+                var arrowBtn = arrowObj.AddComponent<Button>();
+                arrowBtn.targetGraphic = arrowBg;
+                arrowObj.AddComponent<ScrollForwarder>();
+                arrowBtn.onClick.AddListener(new Action(() =>
+                {
+                    if (_hierarchyExpanded.Contains(capturedNodeArrow))
+                        _hierarchyExpanded.Remove(capturedNodeArrow);
+                    else
+                        _hierarchyExpanded.Add(capturedNodeArrow);
+                    RebuildHierarchyList();
+                }));
+            }
 
             // Checkbox for mesh rows
             if (hasMesh)
             {
-                _hierarchyChecked[node] = true;
+                if (!_hierarchyChecked.ContainsKey(node))
+                    _hierarchyChecked[node] = !ShouldAutoExclude(node.gameObject.name);
 
                 var cbObj = new GameObject("Checkbox");
                 cbObj.transform.SetParent(rowObj.transform, false);
@@ -483,7 +646,7 @@ namespace MeshVault.Tools
                 cbRect.anchorMax = new Vector2(0, 0.5f);
                 cbRect.pivot = new Vector2(0, 0.5f);
                 cbRect.sizeDelta = new Vector2(checkboxSize, checkboxSize);
-                cbRect.anchoredPosition = new Vector2(4 + depth * 10, 0);
+                cbRect.anchoredPosition = new Vector2(4 + depth * 10 + arrowOffset, 0);
                 var cbBg = cbObj.AddComponent<Image>();
                 cbBg.color = new Color(0.12f, 0.12f, 0.15f);
 
@@ -495,7 +658,8 @@ namespace MeshVault.Tools
                 checkRect.offsetMin = Vector2.zero;
                 checkRect.offsetMax = Vector2.zero;
                 var checkImg = checkObj.AddComponent<Image>();
-                checkImg.color = new Color(0.4f, 0.8f, 0.45f);
+                bool isChecked = _hierarchyChecked[node];
+                checkImg.color = isChecked ? new Color(0.4f, 0.8f, 0.45f) : new Color(0.25f, 0.25f, 0.3f);
 
                 // Toggle behavior via Button click
                 Transform capturedNodeCb = node;
@@ -510,7 +674,7 @@ namespace MeshVault.Tools
                 }));
             }
 
-            int leftPad = 8 + depth * 10 + checkboxPad;
+            int leftPad = 8 + depth * 10 + arrowOffset + (hasMesh ? checkboxPad : 0);
             int btnW = 72;
             int btnGap = 4;
             int rightZone = hasMesh ? (btnW * btnCount + btnGap * (btnCount - 1) + 8) : 4;
@@ -559,6 +723,20 @@ namespace MeshVault.Tools
             UIHelper.SetWrapping(nameTmp, true);
             nameTmp.overflowMode = TextOverflowModes.Truncate;
 
+            // Hover highlight (all rows)
+            var eventTrigger = rowObj.AddComponent<UnityEngine.EventSystems.EventTrigger>();
+
+            var enterEntry = new UnityEngine.EventSystems.EventTrigger.Entry();
+            enterEntry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerEnter;
+            Transform hoverNode = node;
+            enterEntry.callback.AddListener(new Action<UnityEngine.EventSystems.BaseEventData>(_ => HighlightObject(hoverNode)));
+            eventTrigger.triggers.Add(enterEntry);
+
+            var exitEntry = new UnityEngine.EventSystems.EventTrigger.Entry();
+            exitEntry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerExit;
+            exitEntry.callback.AddListener(new Action<UnityEngine.EventSystems.BaseEventData>(_ => ClearHighlight()));
+            eventTrigger.triggers.Add(exitEntry);
+
             if (!hasMesh) return;
 
             Transform capturedNode = node;
@@ -591,20 +769,6 @@ namespace MeshVault.Tools
                     new Color(0.25f, 0.45f, 0.3f), new Color(0.3f, 0.55f, 0.35f), new Color(0.18f, 0.35f, 0.22f),
                     offset, () => OnHierarchyPreview(capturedNode));
             }
-
-            // Hover highlight
-            var eventTrigger = rowObj.AddComponent<UnityEngine.EventSystems.EventTrigger>();
-
-            var enterEntry = new UnityEngine.EventSystems.EventTrigger.Entry();
-            enterEntry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerEnter;
-            Transform hoverNode = node;
-            enterEntry.callback.AddListener(new Action<UnityEngine.EventSystems.BaseEventData>(_ => HighlightObject(hoverNode)));
-            eventTrigger.triggers.Add(enterEntry);
-
-            var exitEntry = new UnityEngine.EventSystems.EventTrigger.Entry();
-            exitEntry.eventID = UnityEngine.EventSystems.EventTriggerType.PointerExit;
-            exitEntry.callback.AddListener(new Action<UnityEngine.EventSystems.BaseEventData>(_ => ClearHighlight()));
-            eventTrigger.triggers.Add(exitEntry);
         }
 
         private void CreateRowButton(Transform parent, string name, string label, int width,
@@ -653,6 +817,9 @@ namespace MeshVault.Tools
             }
             _hierarchyNodes = null;
             _hierarchyChecked = null;
+            _hierarchyExpanded = null;
+            _hierarchyAncestors = null;
+            _hierarchyListContent = null;
             ClearHighlight();
 
             var cam = PlayerSingleton<PlayerCamera>.Instance;
@@ -951,17 +1118,7 @@ namespace MeshVault.Tools
                 if (parentChecked && directMF != null && directMR != null && IsExtractableChildMesh(directMF.sharedMesh))
                     candidates.Add((directMF, directMR, directMF.sharedMesh.name.Contains("Combined Mesh")));
 
-                int childCount = Mathf.Min(node.childCount, 50);
-                for (int c = 0; c < childCount; c++)
-                {
-                    var child = node.GetChild(c);
-                    if (_hierarchyChecked != null && _hierarchyChecked.TryGetValue(child, out bool isChecked) && !isChecked)
-                        continue;
-                    var cmf = child.GetComponent<MeshFilter>();
-                    var cmr = child.GetComponent<MeshRenderer>();
-                    if (cmf == null || cmr == null || !IsExtractableChildMesh(cmf.sharedMesh)) continue;
-                    candidates.Add((cmf, cmr, cmf.sharedMesh.name.Contains("Combined Mesh")));
-                }
+                CollectExtractableMeshes(node, candidates);
 
                 if (candidates.Count == 0)
                 {
@@ -983,12 +1140,12 @@ namespace MeshVault.Tools
                 {
                     if (isCombined)
                     {
-                        // AABB clip from combined mesh using this renderer's bounds (padded to catch edge triangles)
+                        // AABB clip from combined mesh — returns one part per submesh with its own material
                         var padded = mr.bounds;
                         padded.Expand(0.1f);
                         var clipped = ClipMeshByBounds(mf, mr, padded, combinedBounds.center);
-                        if (clipped.HasValue)
-                            parts.Add(clipped.Value);
+                        if (clipped != null)
+                            parts.AddRange(clipped);
                     }
                     else
                     {
@@ -1093,7 +1250,7 @@ namespace MeshVault.Tools
         /// AABB-clip triangles from a Combined Mesh using the renderer's bounds.
         /// Returns geometry relative to the given center, or null if nothing was extracted.
         /// </summary>
-        private (Vector3[] verts, Vector3[] normals, Vector2[] uvs, int[] tris, Material mat, int vertCount)?
+        private List<(Vector3[] verts, Vector3[] normals, Vector2[] uvs, int[] tris, Material mat, int vertCount)>
             ClipMeshByBounds(MeshFilter mf, MeshRenderer mr, Bounds clipBounds, Vector3 centerOffset)
         {
             var mesh = mf.sharedMesh;
@@ -1121,14 +1278,22 @@ namespace MeshVault.Tools
             }
             bool useRaw = rawHits >= xfHits;
 
-            var vertMap = new Dictionary<int, int>();
-            var newVerts = new List<Vector3>();
-            var newNormals = new List<Vector3>();
-            var newUVs = new List<Vector2>();
-            var newTris = new List<int>();
+            var combinedMats = mr.sharedMaterials;
+            int matCount = combinedMats.Length;
+            var result = new List<(Vector3[] verts, Vector3[] normals, Vector2[] uvs, int[] tris, Material mat, int vertCount)>();
 
-            foreach (var subTris in srcSubTris)
+            // Collect matched submesh data
+            var matchedParts = new List<(int submeshIdx, Vector3[] verts, Vector3[] normals, Vector2[] uvs, int[] tris, int vertCount)>();
+
+            for (int s = 0; s < srcSubTris.Length; s++)
             {
+                var subTris = srcSubTris[s];
+                var vertMap = new Dictionary<int, int>();
+                var newVerts = new List<Vector3>();
+                var newNormals = new List<Vector3>();
+                var newUVs = new List<Vector2>();
+                var newTris = new List<int>();
+
                 for (int i = 0; i < subTris.Length; i += 3)
                 {
                     int i0 = subTris[i], i1 = subTris[i + 1], i2 = subTris[i + 2];
@@ -1155,12 +1320,26 @@ namespace MeshVault.Tools
                         newTris.Add(vertMap[idx]);
                     }
                 }
+
+                if (newTris.Count > 0)
+                    matchedParts.Add((s, newVerts.ToArray(), newNormals.ToArray(), newUVs.ToArray(),
+                        newTris.ToArray(), newVerts.Count));
             }
 
-            if (newVerts.Count == 0) return null;
+            if (matchedParts.Count == 0) return null;
 
-            return (newVerts.ToArray(), newNormals.ToArray(), newUVs.ToArray(), newTris.ToArray(),
-                mr.sharedMaterial, newVerts.Count);
+            // Map materials using offset from first matched submesh index
+            int firstMatchIdx = matchedParts[0].submeshIdx;
+            for (int p = 0; p < matchedParts.Count; p++)
+            {
+                int localIdx = matchedParts[p].submeshIdx - firstMatchIdx;
+                Material subMat = (localIdx >= 0 && localIdx < matCount)
+                    ? combinedMats[localIdx] : mr.sharedMaterial;
+                result.Add((matchedParts[p].verts, matchedParts[p].normals, matchedParts[p].uvs,
+                    matchedParts[p].tris, subMat, matchedParts[p].vertCount));
+            }
+
+            return result;
         }
 
         /// <summary>
