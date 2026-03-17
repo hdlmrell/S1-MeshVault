@@ -48,7 +48,7 @@ namespace MeshVault.Tools
 
                 var ray = new Ray(cam.transform.position, cam.transform.forward);
                 int mask = ~(1 << LayerMask.NameToLayer("Player") | 1 << LayerMask.NameToLayer("NoCollide"));
-                if (!Physics.Raycast(ray, out RaycastHit hit, 20f, mask))
+                if (!Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
                 {
                     _lastAction = "Raycast: nothing hit";
                     return;
@@ -144,7 +144,7 @@ namespace MeshVault.Tools
 
                 var ray = new Ray(cam.transform.position, cam.transform.forward);
                 int mask = ~(1 << LayerMask.NameToLayer("Player") | 1 << LayerMask.NameToLayer("NoCollide"));
-                if (!Physics.Raycast(ray, out RaycastHit hit, 20f, mask))
+                if (!Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
                 {
                     _lastAction = "Grab: nothing hit";
                     return;
@@ -154,7 +154,7 @@ namespace MeshVault.Tools
                 GameObject target = null;
                 for (int i = 0; i < 10 && t != null; i++)
                 {
-                    if (t.gameObject.name.StartsWith("OTC_") || t.gameObject.name.StartsWith("MV_"))
+                    if (t.gameObject.name.StartsWith("MV_") || t.gameObject.name.StartsWith("MeshVault_"))
                     {
                         target = t.gameObject;
                         break;
@@ -173,6 +173,8 @@ namespace MeshVault.Tools
                 _previewScale = target.transform.localScale;
                 _previewIsLiveObject = true;
                 _mode = EditMode.Position;
+
+                ShowEditorPanel();
 
                 string parentInfo = target.transform.parent != null
                     ? $" parent=\"{target.transform.parent.gameObject.name}\""
@@ -200,7 +202,7 @@ namespace MeshVault.Tools
 
                 var ray = new Ray(cam.transform.position, cam.transform.forward);
                 int mask = ~(1 << LayerMask.NameToLayer("Player") | 1 << LayerMask.NameToLayer("NoCollide"));
-                if (!Physics.Raycast(ray, out RaycastHit hit, 20f, mask))
+                if (!Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
                 {
                     _lastAction = "Copy: nothing hit";
                     return;
@@ -210,7 +212,7 @@ namespace MeshVault.Tools
                 GameObject target = null;
                 for (int i = 0; i < 10 && t != null; i++)
                 {
-                    if (t.gameObject.name.StartsWith("OTC_") || t.gameObject.name.StartsWith("MV_"))
+                    if (t.gameObject.name.StartsWith("MV_") || t.gameObject.name.StartsWith("MeshVault_"))
                     {
                         target = t.gameObject;
                         break;
@@ -220,13 +222,13 @@ namespace MeshVault.Tools
 
                 if (target == null)
                 {
-                    _lastAction = "Copy: no OTC_/MV_ object found";
+                    _lastAction = "Copy: no MV_/MeshVault_ object found";
                     return;
                 }
 
                 string meshId = null;
                 string name = target.name;
-                foreach (var prefix in new[] { "OTC_Furniture_", "OTC_TestSpawn_", "MV_TestSpawn_", "MeshVault_" })
+                foreach (var prefix in new[] { "MV_TestSpawn_", "MeshVault_" })
                 {
                     if (name.StartsWith(prefix))
                     {
@@ -264,6 +266,7 @@ namespace MeshVault.Tools
                 _previewScale = Vector3.one;
                 _previewIsLiveObject = false;
                 _mode = EditMode.Position;
+                ShowEditorPanel();
 
                 _lastAction = $"Copied \"{meshId}\" — numpad to adjust, Enter to log, Del to cancel";
             }
@@ -385,15 +388,10 @@ namespace MeshVault.Tools
                 _lastAction = "Hierarchy closed";
             }));
 
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
-            {
-                cam.AddActiveUIElement("MV_MeshPlacer");
-                cam.SetCanLook(false);
-                cam.FreeMouse();
-            }
-            GameInput.IsTyping = true;
-            _wasTypingFromUs = true;
+            // Free cursor for panel interaction
+            _cursorFree = true;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
 
             _hierarchyPanel.SetActive(true);
             _lastAction = $"Hierarchy: {_hierarchyNodes.Count} nodes";
@@ -580,6 +578,7 @@ namespace MeshVault.Tools
             rowBg.color = hasMesh ? new Color(0.22f, 0.22f, 0.28f) : new Color(0.16f, 0.16f, 0.2f);
             rowObj.AddComponent<ScrollForwarder>();
 
+
             bool hasChildren = node.childCount > 0;
             const int arrowSize = 18;
             const int arrowPadding = 20; // space taken by arrow column
@@ -623,6 +622,7 @@ namespace MeshVault.Tools
                 var arrowBtn = arrowObj.AddComponent<Button>();
                 arrowBtn.targetGraphic = arrowBg;
                 arrowObj.AddComponent<ScrollForwarder>();
+
                 arrowBtn.onClick.AddListener(new Action(() =>
                 {
                     if (_hierarchyExpanded.Contains(capturedNodeArrow))
@@ -666,6 +666,7 @@ namespace MeshVault.Tools
                 var cbBtn = cbObj.AddComponent<Button>();
                 cbBtn.targetGraphic = cbBg;
                 cbObj.AddComponent<ScrollForwarder>();
+
                 cbBtn.onClick.AddListener(new Action(() =>
                 {
                     bool current = _hierarchyChecked.ContainsKey(capturedNodeCb) && _hierarchyChecked[capturedNodeCb];
@@ -786,6 +787,7 @@ namespace MeshVault.Tools
             bg.color = normal;
             var btn = btnObj.AddComponent<Button>();
             btnObj.AddComponent<ScrollForwarder>();
+
             var colors = btn.colors;
             colors.normalColor = normal;
             colors.highlightedColor = highlighted;
@@ -822,18 +824,12 @@ namespace MeshVault.Tools
             _hierarchyListContent = null;
             ClearHighlight();
 
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
+            // Re-lock cursor if tool is still active
+            if (_active)
             {
-                cam.RemoveActiveUIElement("MV_MeshPlacer");
-                cam.SetCanLook(true);
-                cam.LockMouse();
-            }
-
-            if (_wasTypingFromUs)
-            {
-                GameInput.IsTyping = false;
-                _wasTypingFromUs = false;
+                _cursorFree = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
             }
         }
 

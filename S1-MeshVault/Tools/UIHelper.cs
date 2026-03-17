@@ -229,11 +229,46 @@ namespace MeshVault.Tools
             _roundedSprite = Sprite.Create(tex, new Rect(0, 0, size, size), new Vector2(0.5f, 0.5f), 100f, 0, SpriteMeshType.FullRect, border);
             return _roundedSprite;
         }
+
+        /// <summary>
+        /// Makes a panel draggable by attaching EventTrigger drag callbacks.
+        /// The panel must have a RectTransform. Uses EventTrigger for IL2CPP compatibility.
+        /// </summary>
+        internal static void MakeDraggable(GameObject panel)
+        {
+            var rt = panel.GetComponent<RectTransform>();
+            if (rt == null) return;
+
+            var trigger = panel.AddComponent<EventTrigger>();
+            Vector2 dragOffset = Vector2.zero;
+
+            var beginEntry = new EventTrigger.Entry { eventID = EventTriggerType.BeginDrag };
+            beginEntry.callback.AddListener(new Action<BaseEventData>(data =>
+            {
+                var pointer = (PointerEventData)data;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    rt.parent as RectTransform, pointer.position, pointer.pressEventCamera, out var localPoint);
+                dragOffset = rt.anchoredPosition - localPoint;
+            }));
+            trigger.triggers.Add(beginEntry);
+
+            var dragEntry = new EventTrigger.Entry { eventID = EventTriggerType.Drag };
+            dragEntry.callback.AddListener(new Action<BaseEventData>(data =>
+            {
+                var pointer = (PointerEventData)data;
+                RectTransformUtility.ScreenPointToLocalPointInRectangle(
+                    rt.parent as RectTransform, pointer.position, pointer.pressEventCamera, out var localPoint);
+                rt.anchoredPosition = localPoint + dragOffset;
+            }));
+            trigger.triggers.Add(dragEntry);
+        }
     }
 
+#if !IL2CPP
     /// <summary>
     /// Forwards scroll events to the nearest parent ScrollRect so that
     /// buttons and other interactive elements don't swallow mouse wheel input.
+    /// IL2CPP cannot implement Unity interfaces on injected types.
     /// </summary>
     internal class ScrollForwarder : MonoBehaviour, IScrollHandler
     {
@@ -251,7 +286,6 @@ namespace MeshVault.Tools
         }
     }
 
-#if !IL2CPP
     /// <summary>
     /// Bridges System.Action delegates to UnityAction for Mono builds.
     /// IL2CPP handles this conversion automatically via Il2CppInterop.

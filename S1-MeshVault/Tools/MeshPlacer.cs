@@ -12,14 +12,18 @@ using UnityEngine.UI;
 using Il2CppInterop.Runtime.Injection;
 using Il2CppScheduleOne.DevUtilities;
 using Il2CppScheduleOne.PlayerScripts;
+using Il2CppScheduleOne.Police;
 using Il2CppTMPro;
 using GameCanvasScaler = Il2CppScheduleOne.UI.CanvasScaler;
+using GameHUD = Il2CppScheduleOne.UI.HUD;
 using GameInput = Il2CppScheduleOne.GameInput;
 #else
 using ScheduleOne.DevUtilities;
 using ScheduleOne.PlayerScripts;
+using ScheduleOne.Police;
 using TMPro;
 using GameCanvasScaler = ScheduleOne.UI.CanvasScaler;
+using GameHUD = ScheduleOne.UI.HUD;
 using GameInput = ScheduleOne.GameInput;
 #endif
 
@@ -39,8 +43,18 @@ namespace MeshVault.Tools
 #endif
         }
 
+        internal static MeshPlacer Instance { get; private set; }
+
+        private void Awake() => Instance = this;
+
+        internal bool IsPositioning => _active && _preview != null;
+
         // Tool state
         private bool _active;
+
+        // Editor mode callbacks (one-shot, cleared after firing)
+        private Action _editorOnConfirm;
+        private Action _editorOnCancel;
 
         // Hierarchy picker
         private GameObject _hierarchyPanel;
@@ -60,9 +74,6 @@ namespace MeshVault.Tools
         private Vector3 _previewScale = Vector3.one;
         private bool _previewIsLiveObject;
         private string _previewDbId;
-
-        // Input
-        private bool _wasTypingFromUs;
 
         // Edit mode
         private enum EditMode { Position, Rotation, Scale }
@@ -119,12 +130,24 @@ namespace MeshVault.Tools
         private List<MeshRenderer> _selectedMeshObjects;
         private HashSet<int> _selectedForExport;
         private string _combinedSearchTerm = "";
-        private bool _tabLooking;
         private float _objectListScrollPos;
 
         // Step sizes
         private static readonly float[] StepSizes = { 0.01f, 0.1f, 1f, 10f };
         private int _stepIndex = 1;
+
+        // Health maintenance
+        private float _healthTimer;
+
+        // Camera control
+        private float _camYaw;
+        private float _camPitch;
+        private float _camMoveSpeed = 10f;
+        private bool _cursorFree;
+        private bool _freecamActive;
+        private bool _wasIsTyping;
+        private const float CamLookSensitivity = 2f;
+        private static bool IsShiftHeld => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
         // Constants
         private const float PreviewDistance = 3f;
@@ -134,25 +157,28 @@ namespace MeshVault.Tools
         {
             if (Input.GetKeyDown(KeyCode.F9))
             {
-                _active = !_active;
                 if (_active)
-                {
-                    _lastAction = "Tool activated — Numpad1 to scan";
-                }
+                    DeactivateTool();
                 else
-                {
-                    CloseSpawnPanel();
-                    ClosePreviewPanel();
-                    CloseCombinedMeshPanel();
-                    CloseHierarchyPanel();
-                    DestroyPreview();
-                    StopExtractMode();
-                    _lastAction = "Tool deactivated";
-                }
+                    ActivateTool();
                 return;
             }
 
             if (!_active) return;
+
+            if (_freecamActive)
+            {
+                // Health maintenance — top up every 2 seconds
+                _healthTimer += Time.deltaTime;
+                if (_healthTimer >= 2f)
+                {
+                    _healthTimer = 0f;
+                    if (Player.Local != null && Player.Local.Health.CurrentHealth < 100f)
+                        Player.Local.Health.SetHealth(100f);
+                }
+
+                UpdateCameraControl();
+            }
 
             if (Input.GetKeyDown(KeyCode.Keypad5))
             {
@@ -161,12 +187,37 @@ namespace MeshVault.Tools
                 else
                     _mode = (EditMode)(((int)_mode + 1) % 3);
                 _lastAction = $"Mode: {_mode}";
+                RefreshEditorPanel();
             }
 
-            if (Input.GetKeyDown(KeyCode.LeftShift) || Input.GetKeyDown(KeyCode.RightShift))
+            if (Input.GetKeyDown(KeyCode.PageUp))
             {
-                _stepIndex = (_stepIndex + 1) % StepSizes.Length;
+                _stepIndex = Mathf.Min(_stepIndex + 1, StepSizes.Length - 1);
                 _lastAction = $"Step: {StepSizes[_stepIndex]}";
+                RefreshEditorPanel();
+            }
+            if (Input.GetKeyDown(KeyCode.PageDown))
+            {
+                _stepIndex = Mathf.Max(_stepIndex - 1, 0);
+                _lastAction = $"Step: {StepSizes[_stepIndex]}";
+                RefreshEditorPanel();
+            }
+
+            // Shift + Numpad+/- to change step size
+            if (IsShiftHeld)
+            {
+                if (Input.GetKeyDown(KeyCode.KeypadPlus))
+                {
+                    _stepIndex = Mathf.Min(_stepIndex + 1, StepSizes.Length - 1);
+                    _lastAction = $"Step: {StepSizes[_stepIndex]}";
+                    RefreshEditorPanel();
+                }
+                if (Input.GetKeyDown(KeyCode.KeypadMinus))
+                {
+                    _stepIndex = Mathf.Max(_stepIndex - 1, 0);
+                    _lastAction = $"Step: {StepSizes[_stepIndex]}";
+                    RefreshEditorPanel();
+                }
             }
 
             if (Input.GetKeyDown(KeyCode.Keypad1))
@@ -226,30 +277,8 @@ namespace MeshVault.Tools
                 return;
             }
 
-            if ((_combinedMeshPanel != null || _hierarchyPanel != null || _spawnPanel != null || _materialPreviewPanel != null))
-            {
-                if (Input.GetKeyDown(KeyCode.Tab))
-                {
-                    _tabLooking = true;
-                    var cam = PlayerSingleton<PlayerCamera>.Instance;
-                    if (cam != null) cam.SetCanLook(true);
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
-                }
-                if (Input.GetKeyUp(KeyCode.Tab) && _tabLooking)
-                {
-                    _tabLooking = false;
-                    var cam = PlayerSingleton<PlayerCamera>.Instance;
-                    if (cam != null)
-                    {
-                        cam.SetCanLook(false);
-                        cam.FreeMouse();
-                    }
-                }
-            }
-
             // Interactive preview: orbit + zoom
-            if (_materialPreviewPanel != null && !_tabLooking)
+            if (_materialPreviewPanel != null && Cursor.lockState != CursorLockMode.Locked)
                 UpdatePreviewInteraction();
 
             if (_extractMode)
@@ -258,20 +287,22 @@ namespace MeshVault.Tools
                 if (Input.GetKeyDown(KeyCode.Keypad4)) AdjustExtract(0, -1);
                 if (Input.GetKeyDown(KeyCode.Keypad8)) AdjustExtract(2, +1);
                 if (Input.GetKeyDown(KeyCode.Keypad2)) AdjustExtract(2, -1);
-                if (Input.GetKeyDown(KeyCode.Keypad9) || Input.GetKeyDown(KeyCode.KeypadPlus)) AdjustExtract(1, +1);
-                if (Input.GetKeyDown(KeyCode.Keypad7) || Input.GetKeyDown(KeyCode.KeypadMinus)) AdjustExtract(1, -1);
+                if (Input.GetKeyDown(KeyCode.Keypad9) || (!IsShiftHeld && Input.GetKeyDown(KeyCode.KeypadPlus))) AdjustExtract(1, +1);
+                if (Input.GetKeyDown(KeyCode.Keypad7) || (!IsShiftHeld && Input.GetKeyDown(KeyCode.KeypadMinus))) AdjustExtract(1, -1);
                 UpdateExtractBox();
                 return;
             }
 
             if (_preview != null)
             {
-                if (Input.GetKeyDown(KeyCode.Keypad6)) Adjust(0, +1);
-                if (Input.GetKeyDown(KeyCode.Keypad4)) Adjust(0, -1);
-                if (Input.GetKeyDown(KeyCode.Keypad8)) Adjust(2, +1);
-                if (Input.GetKeyDown(KeyCode.Keypad2)) Adjust(2, -1);
-                if (Input.GetKeyDown(KeyCode.Keypad9) || Input.GetKeyDown(KeyCode.KeypadPlus)) Adjust(1, +1);
-                if (Input.GetKeyDown(KeyCode.Keypad7) || Input.GetKeyDown(KeyCode.KeypadMinus)) Adjust(1, -1);
+                bool adjusted = false;
+                if (Input.GetKeyDown(KeyCode.Keypad6)) { Adjust(0, +1); adjusted = true; }
+                if (Input.GetKeyDown(KeyCode.Keypad4)) { Adjust(0, -1); adjusted = true; }
+                if (Input.GetKeyDown(KeyCode.Keypad8)) { Adjust(2, +1); adjusted = true; }
+                if (Input.GetKeyDown(KeyCode.Keypad2)) { Adjust(2, -1); adjusted = true; }
+                if (Input.GetKeyDown(KeyCode.Keypad9) || (!IsShiftHeld && Input.GetKeyDown(KeyCode.KeypadPlus))) { Adjust(1, +1); adjusted = true; }
+                if (Input.GetKeyDown(KeyCode.Keypad7) || (!IsShiftHeld && Input.GetKeyDown(KeyCode.KeypadMinus))) { Adjust(1, -1); adjusted = true; }
+                if (adjusted) RefreshEditorPanel();
                 _preview.transform.position = _previewPosition;
                 _preview.transform.eulerAngles = _previewRotation;
                 _preview.transform.localScale = _previewScale;
@@ -320,13 +351,249 @@ namespace MeshVault.Tools
             if (Input.GetKeyDown(KeyCode.KeypadDivide) && _preview == null)
                 GrabObject();
 
-            if (Input.GetKeyDown(KeyCode.Insert) && _preview == null)
+            if (Input.GetKeyDown(KeyCode.Insert))
                 CopyObject();
         }
 
         // ═══════════════════════════════════════════════════════════════
         // Shared helpers
         // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Enters editor mode: suppresses game input, optionally enables freecam
+        /// (camera override, HUD hidden, movement disabled, police ignored).
+        /// </summary>
+        private void ActivateTool(bool useFreecam = true)
+        {
+            _active = true;
+            _healthTimer = 0f;
+            _cursorFree = false;
+            _freecamActive = useFreecam;
+
+            // Suppress all game input (prevents shooting, item use, hotbar switching)
+            _wasIsTyping = GameInput.IsTyping;
+            GameInput.IsTyping = true;
+
+            if (useFreecam)
+            {
+                var cam = PlayerSingleton<PlayerCamera>.Instance;
+                if (cam != null)
+                {
+                    cam.OverrideTransform(cam.transform.position, cam.transform.rotation, 0f);
+                    cam.AddActiveUIElement("MeshPlacer");
+
+                    var euler = cam.transform.eulerAngles;
+                    _camYaw = euler.y;
+                    _camPitch = euler.x;
+                    if (_camPitch > 180f) _camPitch -= 360f;
+                }
+
+                var movement = PlayerSingleton<PlayerMovement>.Instance;
+                if (movement != null)
+                    movement.CanMove = false;
+
+                var inv = PlayerSingleton<PlayerInventory>.Instance;
+                if (inv != null)
+                {
+                    inv.SetViewmodelVisible(false);
+                    inv.SetInventoryEnabled(false);
+                }
+
+                var hud = Singleton<GameHUD>.Instance;
+                if (hud != null)
+                    hud.canvas.enabled = false;
+
+                if (Player.Local != null)
+                {
+                    Player.Local.SetVisibleToLocalPlayer(true);
+                    Player.Local.Health.SetHealth(100f);
+                }
+
+                SetPoliceIgnore(true);
+
+                // Cursor locked for camera look (Tab to toggle free)
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+            else
+            {
+                // No freecam — just free the cursor for UI interaction
+                _cursorFree = true;
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+            }
+
+            _lastAction = "Editor active — Numpad1 to scan";
+        }
+
+        /// <summary>
+        /// Sets a consumer-provided GameObject as the active preview for positioning.
+        /// Activates the tool if not already active, resets mouse state, and opens the editor panel.
+        /// One-shot callbacks fire on confirm (Enter/Log) or cancel (Del/F9 exit).
+        /// </summary>
+        internal void OpenEditorForObject(GameObject target, string displayName,
+            Action onConfirm, Action onCancel, bool useFreecam = true)
+        {
+            if (!_active) ActivateTool(useFreecam);
+            DestroyPreview(); // clean up any existing preview (fires old cancel)
+
+            // Force-reset mouse/cursor state in case a game UI (phone, etc.) left it dirty
+            var cam = PlayerSingleton<PlayerCamera>.Instance;
+            if (cam != null)
+                cam.LockMouse();
+            if (useFreecam)
+            {
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+                _cursorFree = false;
+            }
+            else
+            {
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+                _cursorFree = true;
+            }
+
+            _preview = target;
+            _previewSourceName = displayName ?? target.name;
+            _previewIsLiveObject = true;
+            _previewPosition = new Vector3(
+                Mathf.Round(target.transform.position.x * 100f) / 100f,
+                Mathf.Round(target.transform.position.y * 100f) / 100f,
+                Mathf.Round(target.transform.position.z * 100f) / 100f);
+            _previewRotation = target.transform.eulerAngles;
+            _previewScale = target.transform.localScale;
+            _mode = EditMode.Position;
+
+            _editorOnConfirm = onConfirm;
+            _editorOnCancel = onCancel;
+
+            ShowEditorPanel();
+            _lastAction = $"Positioning \"{_previewSourceName}\"";
+        }
+
+        /// <summary>
+        /// Exits editor mode: closes all panels, restores game input, and if freecam was
+        /// active restores camera, movement, inventory, HUD, and police awareness.
+        /// </summary>
+        private void DeactivateTool()
+        {
+            _active = false;
+            _cursorFree = false;
+
+            CloseEditorPanel();
+            CloseSpawnPanel();
+            ClosePreviewPanel();
+            CloseCombinedMeshPanel();
+            CloseHierarchyPanel();
+            DestroyPreview();
+            StopExtractMode();
+
+            // Restore game input
+            GameInput.IsTyping = _wasIsTyping;
+
+            if (_freecamActive)
+            {
+                var cam = PlayerSingleton<PlayerCamera>.Instance;
+                if (cam != null)
+                {
+                    cam.RemoveActiveUIElement("MeshPlacer");
+                    cam.StopTransformOverride(0f);
+                }
+
+                var movement = PlayerSingleton<PlayerMovement>.Instance;
+                if (movement != null)
+                    movement.CanMove = true;
+
+                var inv = PlayerSingleton<PlayerInventory>.Instance;
+                if (inv != null)
+                {
+                    inv.SetViewmodelVisible(true);
+                    inv.SetInventoryEnabled(true);
+                }
+
+                var hud = Singleton<GameHUD>.Instance;
+                if (hud != null)
+                    hud.canvas.enabled = true;
+
+                if (Player.Local != null)
+                    Player.Local.SetVisibleToLocalPlayer(false);
+
+                SetPoliceIgnore(false);
+
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+
+            _freecamActive = false;
+            _lastAction = "Editor deactivated";
+        }
+
+        /// <summary>
+        /// Handles freecam input: Tab toggles cursor lock, mouse look when locked,
+        /// WASD/Space/Ctrl movement, scroll wheel adjusts flight speed.
+        /// </summary>
+        private void UpdateCameraControl()
+        {
+            var cam = PlayerSingleton<PlayerCamera>.Instance;
+            if (cam == null) return;
+
+            // Tab toggles cursor free/locked for UI interaction
+            if (Input.GetKeyDown(KeyCode.Tab))
+            {
+                _cursorFree = !_cursorFree;
+                if (_cursorFree)
+                {
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
+                }
+                else
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+            }
+
+            // Mouse look when cursor is locked (default state)
+            if (!_cursorFree)
+            {
+                float mx = Input.GetAxis("Mouse X") * CamLookSensitivity;
+                float my = Input.GetAxis("Mouse Y") * CamLookSensitivity;
+                _camYaw += mx;
+                _camPitch = Mathf.Clamp(_camPitch - my, -89f, 89f);
+                cam.transform.rotation = Quaternion.Euler(_camPitch, _camYaw, 0f);
+            }
+
+            // WASD + Space/Ctrl movement (always available)
+            float speed = _camMoveSpeed * Time.unscaledDeltaTime;
+            if (Input.GetKey(KeyCode.LeftShift)) speed *= 3f;
+
+            Vector3 move = Vector3.zero;
+            if (Input.GetKey(KeyCode.W)) move += cam.transform.forward;
+            if (Input.GetKey(KeyCode.S)) move -= cam.transform.forward;
+            if (Input.GetKey(KeyCode.D)) move += cam.transform.right;
+            if (Input.GetKey(KeyCode.A)) move -= cam.transform.right;
+            if (Input.GetKey(KeyCode.Space)) move += Vector3.up;
+            if (Input.GetKey(KeyCode.LeftControl)) move -= Vector3.up;
+
+            if (move.sqrMagnitude > 0.001f)
+                cam.transform.position += move.normalized * speed;
+
+            // Scroll wheel adjusts flight speed (only when cursor locked)
+            if (!_cursorFree)
+            {
+                float scroll = Input.mouseScrollDelta.y;
+                if (Mathf.Abs(scroll) > 0.01f)
+                    _camMoveSpeed = Mathf.Clamp(_camMoveSpeed + scroll * 0.5f, 1f, 50f);
+            }
+        }
+
+        private static void SetPoliceIgnore(bool ignore)
+        {
+            var officers = UnityEngine.Object.FindObjectsOfType<PoliceOfficer>(true);
+            foreach (var officer in officers)
+                officer.SetIgnorePlayers(ignore);
+        }
 
         private void Adjust(int axis, int sign)
         {
@@ -337,21 +604,33 @@ namespace MeshVault.Tools
             {
                 case EditMode.Position:
                     _previewPosition[axis] += delta;
+                    _previewPosition[axis] = RoundToStep(_previewPosition[axis], step);
                     _lastAction = $"Pos {axisNames[axis]} {(delta >= 0 ? "+" : "")}{delta} -> {_previewPosition[axis]:F4}";
                     break;
                 case EditMode.Rotation:
-                    _previewRotation[axis] += delta;
+                    _previewRotation[axis] = (_previewRotation[axis] + delta) % 360f;
+                    if (_previewRotation[axis] < 0f) _previewRotation[axis] += 360f;
                     _lastAction = $"Rot {axisNames[axis]} {(delta >= 0 ? "+" : "")}{delta} -> {_previewRotation[axis]:F2}";
                     break;
                 case EditMode.Scale:
                     _previewScale[axis] = Mathf.Max(0.01f, _previewScale[axis] + delta);
+                    _previewScale[axis] = RoundToStep(_previewScale[axis], step);
                     _lastAction = $"Scale {axisNames[axis]} {(delta >= 0 ? "+" : "")}{delta} -> {_previewScale[axis]:F4}";
                     break;
             }
         }
 
+        private static float RoundToStep(float value, float step) =>
+            Mathf.Round(value / step) * step;
+
         private void DestroyPreview()
         {
+            // Fire cancel callback before clearing state
+            var cancelCb = _editorOnCancel;
+            _editorOnConfirm = null;
+            _editorOnCancel = null;
+            cancelCb?.Invoke();
+
             if (_preview != null && !_previewIsLiveObject)
                 UnityEngine.Object.Destroy(_preview);
             _preview = null;
@@ -361,6 +640,7 @@ namespace MeshVault.Tools
             _previewDbId = null;
             _positionerMaterialOverrides = null;
             _positionerColorOverrides = null;
+            CloseEditorPanel();
         }
 
         private void LogPlacement()
@@ -394,6 +674,12 @@ namespace MeshVault.Tools
             Melon<MeshVaultPlugin>.Logger.Msg(output);
             GUIUtility.systemCopyBuffer = output;
             _lastAction = "Logged to clipboard";
+
+            // Fire confirm callback
+            var confirmCb = _editorOnConfirm;
+            _editorOnConfirm = null;
+            _editorOnCancel = null;
+            confirmCb?.Invoke();
         }
 
         private static string FormatSpawnCall(string id, Vector3 pos, Vector3 rot,
@@ -442,11 +728,41 @@ namespace MeshVault.Tools
         // GUI overlay
         // ═══════════════════════════════════════════════════════════════
 
+        private Texture2D _crosshairTex;
+
+        private void DrawCrosshair()
+        {
+            if (_crosshairTex == null)
+            {
+                _crosshairTex = new Texture2D(1, 1);
+                _crosshairTex.SetPixel(0, 0, Color.white);
+                _crosshairTex.Apply();
+            }
+
+            float cx = Screen.width / 2f;
+            float cy = Screen.height / 2f;
+            const float len = 12f;
+            const float thick = 2f;
+
+            var oldColor = GUI.color;
+            GUI.color = new Color(0f, 1f, 0f, 0.8f);
+            // Horizontal line
+            GUI.DrawTexture(new Rect(cx - len, cy - thick / 2f, len * 2f, thick), _crosshairTex);
+            // Vertical line
+            GUI.DrawTexture(new Rect(cx - thick / 2f, cy - len, thick, len * 2f), _crosshairTex);
+            GUI.color = oldColor;
+        }
+
         private void OnGUI()
         {
             if (!_active) return;
 
-            if (_hierarchyPanel != null || _combinedMeshPanel != null || _spawnPanel != null || _materialPreviewPanel != null)
+            // Always draw crosshair when tool is active
+            DrawCrosshair();
+
+            // Minimal status line when panels or editor are active
+            if (_hierarchyPanel != null || _combinedMeshPanel != null || _spawnPanel != null
+                || _materialPreviewPanel != null || _editorPanel != null)
             {
                 GUI.Label(new Rect(10, 10, 400, 24), $"<b><color=#00ffff>MeshPlacer</color></b>  {_lastAction}");
                 return;
@@ -481,7 +797,7 @@ namespace MeshVault.Tools
 
                 string modeLabel = _mode == EditMode.Position ? "CENTER" : "SIZE";
                 GUILayout.Label($"<size=16><b>>>> {modeLabel} <<<</b></size>");
-                GUILayout.Label($"Step: {StepSizes[_stepIndex]}  (Shift to cycle)");
+                GUILayout.Label($"Step: {StepSizes[_stepIndex]}  (PgUp/PgDn to cycle)");
                 GUILayout.Space(4);
 
                 string cPrefix = _mode == EditMode.Position ? ">> " : "   ";
@@ -493,42 +809,7 @@ namespace MeshVault.Tools
                 GUILayout.Label($"<b>Last:</b> {_lastAction}");
 
                 GUILayout.EndArea();
-                return;
             }
-
-            float pw = 360f, ph = 200f;
-            float px = Screen.width - pw - 10f;
-            float py = Screen.height - ph - 10f;
-            GUI.Box(new Rect(px, py, pw, ph), "", boxStyle);
-
-            GUILayout.BeginArea(new Rect(px + 10, py + 5, pw - 20, ph - 10));
-
-            GUILayout.Label($"<b>Selected:</b> {_previewSourceName}");
-            GUILayout.Space(4);
-
-            string previewModeLabel = _mode switch
-            {
-                EditMode.Position => "POSITION",
-                EditMode.Rotation => "ROTATION",
-                EditMode.Scale => "SCALE",
-                _ => "?"
-            };
-            GUILayout.Label($"<size=16><b>>>> {previewModeLabel} <<<</b></size>");
-            GUILayout.Label($"Step: {StepSizes[_stepIndex]}  (Shift to cycle)");
-            GUILayout.Space(4);
-
-            string posPrefix = _mode == EditMode.Position ? ">> " : "   ";
-            string rotPrefix = _mode == EditMode.Rotation ? ">> " : "   ";
-            string sclPrefix = _mode == EditMode.Scale ? ">> " : "   ";
-
-            GUILayout.Label($"{posPrefix}Position: ({_previewPosition.x:F2}, {_previewPosition.y:F2}, {_previewPosition.z:F2})");
-            GUILayout.Label($"{rotPrefix}Rotation: ({_previewRotation.x:F1}, {_previewRotation.y:F1}, {_previewRotation.z:F1})");
-            GUILayout.Label($"{sclPrefix}Scale:    ({_previewScale.x:F2}, {_previewScale.y:F2}, {_previewScale.z:F2})");
-
-            GUILayout.Space(4);
-            GUILayout.Label($"<b>Last:</b> {_lastAction}");
-
-            GUILayout.EndArea();
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -587,7 +868,7 @@ namespace MeshVault.Tools
             foreach (var mf in allGOs)
             {
                 if (mf != null && mf.gameObject != null &&
-                    (mf.gameObject.name.StartsWith("MV_TestSpawn_") || mf.gameObject.name.StartsWith("OTC_TestSpawn_")))
+                    (mf.gameObject.name.StartsWith("MV_TestSpawn_") || mf.gameObject.name.StartsWith("MeshVault_")))
                 {
                     UnityEngine.Object.Destroy(mf.gameObject);
                     count++;
@@ -602,6 +883,7 @@ namespace MeshVault.Tools
         {
             DestroyPreview();
             StopExtractMode();
+            CloseEditorPanel();
             CloseHierarchyPanel();
             CloseCombinedMeshPanel();
             CloseSpawnPanel();

@@ -196,26 +196,27 @@ namespace MeshVault.Tools
                 _lastAction = "Spawn panel closed";
             }));
 
-            // Unlock cursor
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
-            {
-                cam.SetCanLook(false);
-                cam.FreeMouse();
-            }
+            // Free cursor for panel interaction
+            _cursorFree = true;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
 
             _lastAction = $"Spawn panel: {entries.Length} entries";
         }
 
         private void SpawnFromDatabase(string id)
         {
-            var player = PlayerSingleton<PlayerMovement>.Instance;
-            if (player == null) { _lastAction = "No player"; return; }
+            var cam = PlayerSingleton<PlayerCamera>.Instance;
+            if (cam == null) { _lastAction = "No camera"; return; }
 
-            var forward = player.transform.forward;
-            forward.y = 0;
-            forward.Normalize();
-            var spawnPos = player.transform.position + forward * 3f;
+            // Raycast from camera to find ground surface
+            var ray = new Ray(cam.transform.position, cam.transform.forward);
+            int mask = ~(1 << LayerMask.NameToLayer("Player") | 1 << LayerMask.NameToLayer("NoCollide"));
+            Vector3 spawnPos;
+            if (Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
+                spawnPos = hit.point;
+            else
+                spawnPos = cam.transform.position + cam.transform.forward * 5f;
 
             var go = MeshVaultAPI.Spawn(id, spawnPos, Quaternion.identity, namePrefix: "MV_TestSpawn");
             if (go != null)
@@ -252,20 +253,14 @@ namespace MeshVault.Tools
         {
             CloseSpawnPanel();
 
-            // Re-lock cursor for numpad positioning
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
-            {
-                cam.SetCanLook(true);
-                Cursor.lockState = CursorLockMode.Locked;
-                Cursor.visible = false;
-            }
-
-            // Set as preview so numpad adjust + OnGUI overlay work
+            // Set as preview so numpad adjust + editor panel work
             _preview = go;
             _previewSourceName = dbId;
             _previewDbId = dbId;
-            _previewPosition = pos;
+            _previewPosition = new Vector3(
+                Mathf.Round(pos.x * 100f) / 100f,
+                Mathf.Round(pos.y * 100f) / 100f,
+                Mathf.Round(pos.z * 100f) / 100f);
             _previewRotation = Vector3.zero;
             _previewScale = Vector3.one;
             _previewIsLiveObject = false;
@@ -273,6 +268,7 @@ namespace MeshVault.Tools
             _positionerMaterialOverrides = materialOverrides;
             _positionerColorOverrides = colorOverrides;
 
+            ShowEditorPanel();
             _lastAction = $"Positioning \"{dbId}\" — numpad to adjust, Enter to log, Del to cancel";
         }
 
@@ -326,16 +322,10 @@ namespace MeshVault.Tools
 
         private GameObject _renameOverlay;
 
-        private bool _renameWasTyping;
-
         private void ShowRenameInput(string oldId)
         {
             if (_renameOverlay != null)
                 UnityEngine.Object.Destroy(_renameOverlay);
-
-            // Suppress game input while typing in the rename field
-            _renameWasTyping = GameInput.IsTyping;
-            GameInput.IsTyping = true;
 
             _renameOverlay = new GameObject("RenameOverlay");
             _renameOverlay.transform.SetParent(_spawnPanel.transform, false);
@@ -412,7 +402,7 @@ namespace MeshVault.Tools
                     {
                         UnityEngine.Object.Destroy(_renameOverlay);
                         _renameOverlay = null;
-                        if (!_renameWasTyping) GameInput.IsTyping = false;
+
                         return;
                     }
                     if (MeshVaultAPI.RenameEntry(capturedOldId, newId))
@@ -421,7 +411,7 @@ namespace MeshVault.Tools
                         _lastAction = $"Renamed \"{capturedOldId}\" -> \"{newId}\"";
                         UnityEngine.Object.Destroy(_renameOverlay);
                         _renameOverlay = null;
-                        if (!_renameWasTyping) GameInput.IsTyping = false;
+
                         ShowSpawnPanel();
                     }
                     else
@@ -436,7 +426,6 @@ namespace MeshVault.Tools
                 {
                     UnityEngine.Object.Destroy(_renameOverlay);
                     _renameOverlay = null;
-                    if (!_renameWasTyping) GameInput.IsTyping = false;
                 }));
 
             // Focus the input
@@ -450,12 +439,18 @@ namespace MeshVault.Tools
             {
                 UnityEngine.Object.Destroy(_renameOverlay);
                 _renameOverlay = null;
-                if (!_renameWasTyping) GameInput.IsTyping = false;
             }
             if (_spawnPanel != null)
             {
                 UnityEngine.Object.Destroy(_spawnPanel);
                 _spawnPanel = null;
+            }
+            // Re-lock cursor if tool is still active and no other panels need it
+            if (_active && _editorPanel == null)
+            {
+                _cursorFree = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
             }
         }
     }

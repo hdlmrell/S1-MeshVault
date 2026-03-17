@@ -66,6 +66,12 @@
 	<ItemGroup Condition="!$(Configuration.StartsWith('Mono'))">
 		<Reference Include="Il2CppInterop.Runtime"><HintPath>$(MLPath)\Il2CppInterop.Runtime.dll</HintPath></Reference>
 		<Reference Include="Il2Cppmscorlib"><HintPath>$(GameDllPath)\Il2Cppmscorlib.dll</HintPath></Reference>
+		<Reference Include="Il2CppFishNet.Runtime"><HintPath>$(GameDllPath)\Il2CppFishNet.Runtime.dll</HintPath></Reference>
+	</ItemGroup>
+
+	<!-- Mono-only references -->
+	<ItemGroup Condition="$(Configuration.StartsWith('Mono'))">
+		<Reference Include="FishNet.Runtime"><HintPath>$(GameDllPath)\FishNet.Runtime.dll</HintPath></Reference>
 	</ItemGroup>
 
 	<!-- Beta-only: ScheduleOne.Core assembly (split from Assembly-CSharp in game 0.4.4) -->

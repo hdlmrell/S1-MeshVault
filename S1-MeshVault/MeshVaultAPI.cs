@@ -945,6 +945,34 @@ namespace MeshVault
                 if (a != null) return a;
             return null;
         }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Editor Mode API (Debug builds only)
+        // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Opens F9 editor mode to position a specific GameObject.
+        /// The object moves in realtime — read its transform directly.
+        /// <paramref name="onConfirm"/> fires when user presses Enter/Log.
+        /// <paramref name="onCancel"/> fires on Del or F9 exit.
+        /// Callbacks are one-shot (cleared after firing).
+        /// Set <paramref name="useFreecam"/> to false for UI elements or when
+        /// the player camera should stay attached (e.g., positioning screen-space objects).
+        /// </summary>
+        public static void EnterEditorMode(GameObject target, string displayName = null,
+            Action onConfirm = null, Action onCancel = null, bool useFreecam = true)
+        {
+            var placer = Tools.MeshPlacer.Instance;
+            if (placer == null || target == null) return;
+            placer.OpenEditorForObject(target, displayName, onConfirm, onCancel, useFreecam);
+        }
+
+        /// <summary>
+        /// Returns true when the F9 editor is active and has an object being positioned.
+        /// </summary>
+        public static bool IsEditorModeActive =>
+            Tools.MeshPlacer.Instance != null &&
+            Tools.MeshPlacer.Instance.IsPositioning;
 #endif
     }
 }

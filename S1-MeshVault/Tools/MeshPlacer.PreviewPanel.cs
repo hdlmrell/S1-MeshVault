@@ -113,13 +113,10 @@ namespace MeshVault.Tools
             // Build UI
             BuildPreviewUI(entry, submeshCount, childCount);
 
-            // Unlock cursor
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
-            {
-                cam.SetCanLook(false);
-                cam.FreeMouse();
-            }
+            // Free cursor for panel interaction
+            _cursorFree = true;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
 
             _lastAction = $"Preview: {entryId} ({slotCount} material slot(s))";
         }
@@ -436,7 +433,9 @@ namespace MeshVault.Tools
 
             var btn = swatchObj.AddComponent<Button>();
             btn.targetGraphic = swatchImg;
+#if !IL2CPP
             swatchObj.AddComponent<ScrollForwarder>();
+#endif
 
             string capturedName = isDefault ? null : materialName;
             string capturedDefault = defaultMat;
@@ -911,6 +910,14 @@ namespace MeshVault.Tools
             _materialCatalog = null;
             _previewRawImage = null;
             _previewDragging = false;
+
+            // Re-lock cursor if tool is still active
+            if (_active)
+            {
+                _cursorFree = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
         }
 
         /// <summary>

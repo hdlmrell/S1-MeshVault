@@ -341,16 +341,10 @@ namespace MeshVault.Tools
                     _lastAction = "Combined mesh browser closed";
                 }));
 
-                // Unlock cursor
-                var cam = PlayerSingleton<PlayerCamera>.Instance;
-                if (cam != null)
-                {
-                    cam.AddActiveUIElement("MV_CombinedBrowser");
-                    cam.SetCanLook(false);
-                    cam.FreeMouse();
-                }
-                GameInput.IsTyping = true;
-                _wasTypingFromUs = true;
+                // Free cursor for panel interaction
+                _cursorFree = true;
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
 
                 _combinedMeshPanel.SetActive(true);
                 _lastAction = $"Combined meshes: {_combinedMeshGroups.Count} found";
@@ -788,18 +782,12 @@ namespace MeshVault.Tools
                     _lastAction = "Combined mesh browser closed";
                 }));
 
-                // Cursor already unlocked from ShowCombinedMeshBrowser, but handle direct navigation
-                if (!_wasTypingFromUs)
+                // Ensure cursor is free for panel interaction
+                if (!_cursorFree)
                 {
-                    var cam = PlayerSingleton<PlayerCamera>.Instance;
-                    if (cam != null)
-                    {
-                        cam.AddActiveUIElement("MV_CombinedBrowser");
-                        cam.SetCanLook(false);
-                        cam.FreeMouse();
-                    }
-                    GameInput.IsTyping = true;
-                    _wasTypingFromUs = true;
+                    _cursorFree = true;
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
                 }
 
                 _combinedMeshPanel.SetActive(true);
@@ -877,21 +865,14 @@ namespace MeshVault.Tools
                 _combinedSearchTerm = "";
                 _objectListScrollPos = 0f;
             }
-            _tabLooking = false;
             ClearHighlight();
 
-            var cam = PlayerSingleton<PlayerCamera>.Instance;
-            if (cam != null)
+            // Re-lock cursor if tool is still active
+            if (_active)
             {
-                cam.RemoveActiveUIElement("MV_CombinedBrowser");
-                cam.SetCanLook(true);
-                cam.LockMouse();
-            }
-
-            if (_wasTypingFromUs)
-            {
-                GameInput.IsTyping = false;
-                _wasTypingFromUs = false;
+                _cursorFree = false;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
             }
         }
 
