@@ -147,6 +147,16 @@ namespace MeshVault.Tools
         private bool _freecamActive;
         private bool _wasIsTyping;
         private const float CamLookSensitivity = 2f;
+
+        // Crosshair highlight (freecam bounding box preview)
+        private bool _crosshairHighlight;
+        private GameObject _crosshairHighlightBox;
+        private Transform _crosshairHighlightTarget;
+        private MeshRenderer[] _cachedRenderers;
+        private float _rendererCacheTime;
+        private float _fallbackScanTimer;
+        private const float RendererCacheInterval = 2f;
+        private const float FallbackScanInterval = 0.15f;
         private static bool IsShiftHeld => Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
 
         // Constants
@@ -178,6 +188,10 @@ namespace MeshVault.Tools
                 }
 
                 UpdateCameraControl();
+                if (_crosshairHighlight && !_cursorFree)
+                    UpdateCrosshairHighlight();
+                else if (_crosshairHighlight && _cursorFree)
+                    ClearCrosshairHighlight();
             }
 
             if (Input.GetKeyDown(KeyCode.Keypad5))
@@ -248,7 +262,14 @@ namespace MeshVault.Tools
                     if (Physics.Raycast(ray, out RaycastHit hit, 20f, mask))
                         ShowHierarchyPicker(hit);
                     else
-                        _lastAction = "Nothing hit";
+                    {
+                        // Fallback: find renderer without collider (e.g. overpass)
+                        var rendererTarget = FindRendererAlongRay(ray, 100f);
+                        if (rendererTarget != null)
+                            ShowHierarchyPicker(rendererTarget);
+                        else
+                            _lastAction = "Nothing hit";
+                    }
                 }
                 return;
             }
@@ -353,6 +374,13 @@ namespace MeshVault.Tools
 
             if (Input.GetKeyDown(KeyCode.Insert))
                 CopyObject();
+
+            if (Input.GetKeyDown(KeyCode.KeypadMultiply))
+            {
+                _crosshairHighlight = !_crosshairHighlight;
+                if (!_crosshairHighlight) ClearCrosshairHighlight();
+                _lastAction = _crosshairHighlight ? "Crosshair highlight ON" : "Crosshair highlight OFF";
+            }
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -488,6 +516,9 @@ namespace MeshVault.Tools
             CloseHierarchyPanel();
             DestroyPreview();
             StopExtractMode();
+            ClearCrosshairHighlight();
+            _crosshairHighlight = false;
+            _cachedRenderers = null;
 
             // Restore game input
             GameInput.IsTyping = _wasIsTyping;
@@ -586,6 +617,120 @@ namespace MeshVault.Tools
                 if (Mathf.Abs(scroll) > 0.01f)
                     _camMoveSpeed = Mathf.Clamp(_camMoveSpeed + scroll * 0.5f, 1f, 50f);
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Crosshair highlight
+        // ═══════════════════════════════════════════════════════════════
+
+        private void UpdateCrosshairHighlight()
+        {
+            var cam = PlayerSingleton<PlayerCamera>.Instance;
+            if (cam == null) return;
+
+            var ray = new Ray(cam.transform.position, cam.transform.forward);
+            int mask = ~(1 << LayerMask.NameToLayer("Player") | 1 << LayerMask.NameToLayer("NoCollide"));
+
+            Transform target = null;
+
+            // Try physics raycast first (objects with colliders — cheap)
+            if (Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
+            {
+                target = hit.collider.transform;
+            }
+            else
+            {
+                // Throttle the expensive renderer scan
+                _fallbackScanTimer += Time.unscaledDeltaTime;
+                if (_fallbackScanTimer < FallbackScanInterval)
+                    return; // Keep current highlight until next scan
+                _fallbackScanTimer = 0f;
+
+                target = FindRendererAlongRay(ray, 100f);
+            }
+
+            if (target == null)
+            {
+                ClearCrosshairHighlight();
+                return;
+            }
+
+            if (target == _crosshairHighlightTarget) return;
+
+            ClearCrosshairHighlight();
+
+            try
+            {
+                _crosshairHighlightTarget = target;
+
+                var renderers = target.GetComponentsInChildren<MeshRenderer>();
+                if (renderers == null || renderers.Length == 0) return;
+
+                var bounds = renderers[0].bounds;
+                for (int i = 1; i < renderers.Length; i++)
+                    bounds.Encapsulate(renderers[i].bounds);
+
+                _crosshairHighlightBox = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                _crosshairHighlightBox.name = "MV_CrosshairHighlight";
+                var col = _crosshairHighlightBox.GetComponent<Collider>();
+                if (col != null) UnityEngine.Object.Destroy(col);
+                _crosshairHighlightBox.transform.position = bounds.center;
+                _crosshairHighlightBox.transform.localScale = bounds.size + Vector3.one * 0.02f;
+
+                var boxMR = _crosshairHighlightBox.GetComponent<MeshRenderer>();
+                boxMR.shadowCastingMode = ShadowCastingMode.Off;
+                boxMR.receiveShadows = false;
+                var mat = new Material(Shader.Find("Sprites/Default"));
+                mat.color = new Color(0f, 1f, 1f, 0.15f);
+                boxMR.material = mat;
+            }
+            catch (Exception ex)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"[MeshPlacer] Crosshair highlight failed: {ex.Message}\n{ex.StackTrace}");
+            }
+        }
+
+        /// <summary>
+        /// Finds the nearest MeshRenderer whose bounding box intersects the ray.
+        /// Uses a cached renderer list refreshed every <see cref="RendererCacheInterval"/> seconds.
+        /// </summary>
+        private Transform FindRendererAlongRay(Ray ray, float maxDist)
+        {
+            // Refresh cache periodically instead of every call
+            float now = Time.unscaledTime;
+            if (_cachedRenderers == null || now - _rendererCacheTime > RendererCacheInterval)
+            {
+                _cachedRenderers = UnityEngine.Object.FindObjectsOfType<MeshRenderer>();
+                _rendererCacheTime = now;
+            }
+
+            Transform best = null;
+            float bestDist = maxDist;
+
+            foreach (var mr in _cachedRenderers)
+            {
+                if (mr == null || !mr.enabled || !mr.gameObject.activeInHierarchy) continue;
+                if (mr.gameObject.name.StartsWith("MV_")) continue;
+
+                var b = mr.bounds;
+                if (b.IntersectRay(ray, out float dist) && dist > 0f && dist < bestDist)
+                {
+                    bestDist = dist;
+                    best = mr.transform;
+                }
+            }
+
+            return best;
+        }
+
+        private void ClearCrosshairHighlight()
+        {
+            if (_crosshairHighlightBox != null)
+            {
+                try { UnityEngine.Object.Destroy(_crosshairHighlightBox); } catch { }
+                _crosshairHighlightBox = null;
+            }
+            _crosshairHighlightTarget = null;
         }
 
         private static void SetPoliceIgnore(bool ignore)

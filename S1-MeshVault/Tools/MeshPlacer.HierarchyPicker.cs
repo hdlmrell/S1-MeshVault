@@ -281,13 +281,18 @@ namespace MeshVault.Tools
         // Hierarchy picker
         // ═══════════════════════════════════════════════════════════════
 
-        private void ShowHierarchyPicker(RaycastHit hit)
+        /// <summary>
+        /// Opens the hierarchy picker starting from a Transform directly (for collider-less objects).
+        /// </summary>
+        private void ShowHierarchyPicker(Transform target) => ShowHierarchyPickerFrom(target);
+
+        private void ShowHierarchyPicker(RaycastHit hit) => ShowHierarchyPickerFrom(hit.collider.transform);
+
+        private void ShowHierarchyPickerFrom(Transform hitT)
         {
             try
             {
-            CloseHierarchyPanel();
-
-            var hitT = hit.collider.transform;
+                CloseHierarchyPanel();
 
             _hierarchyAncestors = new List<Transform>();
             var t = hitT;
