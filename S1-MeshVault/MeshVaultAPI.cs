@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using MelonLoader;
 using UnityEngine;
+using UnityEngine.Rendering.Universal;
 
 namespace MeshVault
 {
@@ -27,6 +28,9 @@ namespace MeshVault
         private const float DefaultMetallic = 0f;
         private const float DefaultSmoothness = 0.1f;
         private const float BakedSmoothness = 0f;
+        internal const string DecalPropBaseMap = "_Base_Map";
+        internal const string DecalPropColor = "_Color";
+        internal const float DecalDepth = 0.5f;
 
         internal static readonly float[] DefaultColor = { 1f, 1f, 1f, 1f };
 
@@ -500,6 +504,84 @@ namespace MeshVault
                 $"Spawned \"{id}\" at {position} ({materials.Length} material(s))");
 #endif
             return go;
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Decal spawning
+        // ═══════════════════════════════════════════════════════════════
+
+        private static Material _decalBaseMaterial;
+
+        /// <summary>
+        /// Spawns a DecalProjector that projects the named texture onto nearby surfaces.
+        /// The texture is found by name from all loaded Texture2D assets.
+        /// </summary>
+        /// <param name="textureName">Name of the Texture2D to project (e.g. "Graffiti_01").</param>
+        /// <param name="position">World position for the projector.</param>
+        /// <param name="rotation">World rotation — projector's forward (+Z) should face into the surface.</param>
+        /// <param name="tintColor">Optional color tint applied to the decal. Defaults to white.</param>
+        /// <param name="scale">Optional XY scale for the projection size. Z is ignored. Defaults to (1,1,1).</param>
+        /// <param name="parent">Optional parent transform.</param>
+        /// <returns>The spawned GameObject with DecalProjector, or null if the texture or shader was not found.</returns>
+        public static GameObject SpawnDecal(string textureName, Vector3 position, Quaternion rotation,
+            Color? tintColor = null, Vector3? scale = null, Transform parent = null)
+        {
+            var tex = FindSceneTexture(textureName) as Texture2D;
+            if (tex == null)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"Decal texture \"{textureName}\" not found");
+                return null;
+            }
+
+            var baseMat = FindDecalBaseMaterial();
+            if (baseMat == null)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning("No decal shader found in scene");
+                return null;
+            }
+
+            var go = new GameObject($"MV_Decal_{textureName}");
+            var projector = go.AddComponent<DecalProjector>();
+
+            var mat = new Material(baseMat);
+            mat.SetTexture(DecalPropBaseMap, tex);
+            mat.SetColor(DecalPropColor, tintColor ?? Color.white);
+
+            projector.material = mat;
+            var sz = scale ?? Vector3.one;
+            projector.size = new Vector3(sz.x, sz.y, DecalDepth);
+            projector.pivot = new Vector3(0f, 0f, DecalDepth * 0.5f);
+            projector.fadeFactor = 1f;
+            projector.renderingLayerMask = uint.MaxValue;
+
+            go.transform.position = position;
+            go.transform.rotation = rotation;
+            if (parent != null)
+                go.transform.SetParent(parent, true);
+
+            return go;
+        }
+
+        private static Material FindDecalBaseMaterial()
+        {
+            if (_decalBaseMaterial != null) return _decalBaseMaterial;
+
+            var existingProjectors = UnityEngine.Object.FindObjectsOfType<DecalProjector>(true);
+            foreach (var p in existingProjectors)
+            {
+                if (p != null && p.material != null && p.material.shader != null)
+                {
+                    _decalBaseMaterial = new Material(p.material);
+                    return _decalBaseMaterial;
+                }
+            }
+
+            var shader = Shader.Find("Shader Graphs/Decal")
+                      ?? Shader.Find("Universal Render Pipeline/Decal");
+            if (shader != null)
+                _decalBaseMaterial = new Material(shader);
+
+            return _decalBaseMaterial;
         }
 
         // ═══════════════════════════════════════════════════════════════

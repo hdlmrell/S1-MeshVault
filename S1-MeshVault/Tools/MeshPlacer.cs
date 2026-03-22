@@ -6,6 +6,7 @@ using System.Text;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.Rendering;
+using UnityEngine.Rendering.Universal;
 using UnityEngine.UI;
 
 #if IL2CPP
@@ -305,7 +306,19 @@ namespace MeshVault.Tools
                 if (adjusted) RefreshEditorPanel();
                 _preview.transform.position = _previewPosition;
                 _preview.transform.eulerAngles = _previewRotation;
-                _preview.transform.localScale = _previewScale;
+
+                // DecalProjector size is controlled via projector.size, not localScale
+                if (_previewDecalTexName != null)
+                {
+                    _preview.transform.localScale = Vector3.one;
+                    var proj = _preview.GetComponent<DecalProjector>();
+                    if (proj != null)
+                        proj.size = new Vector3(_previewScale.x, _previewScale.y, MeshVaultAPI.DecalDepth);
+                }
+                else
+                {
+                    _preview.transform.localScale = _previewScale;
+                }
             }
 
             if (Input.GetKeyDown(KeyCode.KeypadEnter) && _preview != null)
@@ -322,6 +335,11 @@ namespace MeshVault.Tools
                 {
                     CloseSpawnPanel();
                     _lastAction = "Spawn panel closed";
+                }
+                else if (_decalPanel != null)
+                {
+                    CloseDecalPanel();
+                    _lastAction = "Decal panel closed";
                 }
                 else if (_combinedMeshPanel != null)
                 {
@@ -483,6 +501,7 @@ namespace MeshVault.Tools
 
             CloseEditorPanel();
             CloseSpawnPanel();
+            CloseDecalPanel();
             ClosePreviewPanel();
             CloseCombinedMeshPanel();
             CloseHierarchyPanel();
@@ -638,6 +657,7 @@ namespace MeshVault.Tools
             _previewSourceTransform = null;
             _previewSourceName = null;
             _previewDbId = null;
+            _previewDecalTexName = null;
             _positionerMaterialOverrides = null;
             _positionerColorOverrides = null;
             CloseEditorPanel();
@@ -669,6 +689,11 @@ namespace MeshVault.Tools
             if (_previewDbId != null)
             {
                 output += $"\n[MeshPlacer] {FormatSpawnCall(_previewDbId, p, r, _positionerMaterialOverrides, _positionerColorOverrides)}";
+            }
+
+            if (_previewDecalTexName != null)
+            {
+                output += $"\n[MeshPlacer] {FormatDecalSpawnCall(_previewDecalTexName, p, r, s, _decalTintColor)}";
             }
 
             Melon<MeshVaultPlugin>.Logger.Msg(output);
@@ -724,6 +749,24 @@ namespace MeshVault.Tools
             return sb.ToString();
         }
 
+        private static string FormatDecalSpawnCall(string texName, Vector3 pos, Vector3 rot,
+            Vector3 scale, Color tint)
+        {
+            var sb = new StringBuilder();
+            sb.Append($"MeshVaultAPI.SpawnDecal(\"{texName}\", ");
+            sb.Append($"new Vector3({pos.x:F4}f, {pos.y:F4}f, {pos.z:F4}f), ");
+            sb.Append($"Quaternion.Euler({rot.x:F2}f, {rot.y:F2}f, {rot.z:F2}f)");
+
+            if (scale != Vector3.one)
+                sb.Append($", scale: new Vector3({scale.x:F4}f, {scale.y:F4}f, {scale.z:F4}f)");
+
+            if (tint != Color.white)
+                sb.Append($", tintColor: new Color({tint.r:F2}f, {tint.g:F2}f, {tint.b:F2}f, 1f)");
+
+            sb.Append(")");
+            return sb.ToString();
+        }
+
         // ═══════════════════════════════════════════════════════════════
         // GUI overlay
         // ═══════════════════════════════════════════════════════════════
@@ -762,7 +805,7 @@ namespace MeshVault.Tools
 
             // Minimal status line when panels or editor are active
             if (_hierarchyPanel != null || _combinedMeshPanel != null || _spawnPanel != null
-                || _materialPreviewPanel != null || _editorPanel != null)
+                || _decalPanel != null || _materialPreviewPanel != null || _editorPanel != null)
             {
                 GUI.Label(new Rect(10, 10, 400, 24), $"<b><color=#00ffff>MeshPlacer</color></b>  {_lastAction}");
                 return;
@@ -887,6 +930,7 @@ namespace MeshVault.Tools
             CloseHierarchyPanel();
             CloseCombinedMeshPanel();
             CloseSpawnPanel();
+            CloseDecalPanel();
             ClosePreviewPanel();
         }
     }
