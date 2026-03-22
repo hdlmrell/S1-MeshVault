@@ -286,120 +286,126 @@ namespace MeshVault.Tools
         /// </summary>
         private void ShowHierarchyPicker(Transform target) => ShowHierarchyPickerFrom(target);
 
+        /// <summary>
+        /// Opens the hierarchy picker from a raycast hit (collider-based).
+        /// </summary>
         private void ShowHierarchyPicker(RaycastHit hit) => ShowHierarchyPickerFrom(hit.collider.transform);
 
+        /// <summary>
+        /// Shared implementation for hierarchy picker — builds ancestor list and UI panel.
+        /// </summary>
         private void ShowHierarchyPickerFrom(Transform hitT)
         {
             try
             {
                 CloseHierarchyPanel();
 
-            _hierarchyAncestors = new List<Transform>();
-            var t = hitT;
-            for (int i = 0; i < 3 && t != null; i++)
-            {
-                if (t != hitT && t.childCount > 50)
-                    break;
-                _hierarchyAncestors.Add(t);
-                t = t.parent;
-            }
-            _hierarchyAncestors.Reverse();
+                _hierarchyAncestors = new List<Transform>();
+                var t = hitT;
+                for (int i = 0; i < 3 && t != null; i++)
+                {
+                    if (t != hitT && t.childCount > 50)
+                        break;
+                    _hierarchyAncestors.Add(t);
+                    t = t.parent;
+                }
+                _hierarchyAncestors.Reverse();
 
-            _hierarchyChecked = new Dictionary<Transform, bool>();
-            _hierarchyExpanded = new HashSet<Transform>(_hierarchyAncestors);
-            BuildFlatNodeList();
+                _hierarchyChecked = new Dictionary<Transform, bool>();
+                _hierarchyExpanded = new HashSet<Transform>(_hierarchyAncestors);
+                BuildFlatNodeList();
 
-            // Build UI panel
-            _hierarchyPanel = new GameObject("MV_HierarchyPanel");
-            var rootCanvas = _hierarchyPanel.AddComponent<Canvas>();
-            rootCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
-            rootCanvas.sortingOrder = 91;
+                // Build UI panel
+                _hierarchyPanel = new GameObject("MV_HierarchyPanel");
+                var rootCanvas = _hierarchyPanel.AddComponent<Canvas>();
+                rootCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                rootCanvas.sortingOrder = 91;
 
-            var scaler = _hierarchyPanel.AddComponent<CanvasScaler>();
-            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1920, 1080);
-            scaler.matchWidthOrHeight = 0.5f;
-            _hierarchyPanel.AddComponent<GameCanvasScaler>();
-            _hierarchyPanel.AddComponent<GraphicRaycaster>();
+                var scaler = _hierarchyPanel.AddComponent<CanvasScaler>();
+                scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+                scaler.referenceResolution = new Vector2(1920, 1080);
+                scaler.matchWidthOrHeight = 0.5f;
+                _hierarchyPanel.AddComponent<GameCanvasScaler>();
+                _hierarchyPanel.AddComponent<GraphicRaycaster>();
 
-            var panelObj = UIHelper.Panel("HierarchyPanel", _hierarchyPanel.transform, new Color(0.1f, 0.1f, 0.12f));
-            var panelRect = panelObj.GetComponent<RectTransform>();
-            panelRect.anchorMin = new Vector2(0.01f, 0.05f);
-            panelRect.anchorMax = new Vector2(0.36f, 0.95f);
-            panelRect.offsetMin = Vector2.zero;
-            panelRect.offsetMax = Vector2.zero;
+                var panelObj = UIHelper.Panel("HierarchyPanel", _hierarchyPanel.transform, new Color(0.1f, 0.1f, 0.12f));
+                var panelRect = panelObj.GetComponent<RectTransform>();
+                panelRect.anchorMin = new Vector2(0.01f, 0.05f);
+                panelRect.anchorMax = new Vector2(0.36f, 0.95f);
+                panelRect.offsetMin = Vector2.zero;
+                panelRect.offsetMax = Vector2.zero;
 
-            string hitName = hitT.gameObject.name;
-            if (hitName.Length > 30) hitName = hitName.Substring(0, 27) + "...";
-            var titleTmp = UIHelper.Text("Title", $"<b>Hierarchy</b> — {hitName}", panelObj.transform, 16, TextAlignmentOptions.Center);
-            var titleRect = titleTmp.GetComponent<RectTransform>();
-            titleRect.anchorMin = new Vector2(0, 1);
-            titleRect.anchorMax = new Vector2(1, 1);
-            titleRect.pivot = new Vector2(0.5f, 1);
-            titleRect.anchoredPosition = new Vector2(0, -5);
-            titleRect.sizeDelta = new Vector2(0, 28);
+                string hitName = hitT.gameObject.name;
+                if (hitName.Length > 30) hitName = hitName.Substring(0, 27) + "...";
+                var titleTmp = UIHelper.Text("Title", $"<b>Hierarchy</b> — {hitName}", panelObj.transform, 16, TextAlignmentOptions.Center);
+                var titleRect = titleTmp.GetComponent<RectTransform>();
+                titleRect.anchorMin = new Vector2(0, 1);
+                titleRect.anchorMax = new Vector2(1, 1);
+                titleRect.pivot = new Vector2(0.5f, 1);
+                titleRect.anchoredPosition = new Vector2(0, -5);
+                titleRect.sizeDelta = new Vector2(0, 28);
 
-            var listContentGO = UIHelper.ScrollableVerticalList("HierarchyList", panelObj.transform, out ScrollRect scrollRect);
-            _hierarchyListContent = listContentGO.transform;
-            var listContent = listContentGO;
-            var scrollRectTransform = scrollRect.GetComponent<RectTransform>();
-            scrollRectTransform.anchorMin = new Vector2(0, 0);
-            scrollRectTransform.anchorMax = new Vector2(1, 1);
-            scrollRectTransform.offsetMin = new Vector2(8, 40);
-            scrollRectTransform.offsetMax = new Vector2(-8, -38);
+                var listContentGO = UIHelper.ScrollableVerticalList("HierarchyList", panelObj.transform, out ScrollRect scrollRect);
+                _hierarchyListContent = listContentGO.transform;
+                var listContent = listContentGO;
+                var scrollRectTransform = scrollRect.GetComponent<RectTransform>();
+                scrollRectTransform.anchorMin = new Vector2(0, 0);
+                scrollRectTransform.anchorMax = new Vector2(1, 1);
+                scrollRectTransform.offsetMin = new Vector2(8, 40);
+                scrollRectTransform.offsetMax = new Vector2(-8, -38);
 
-            var csf = listContent.GetComponent<ContentSizeFitter>();
-            if (csf != null)
-                csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+                var csf = listContent.GetComponent<ContentSizeFitter>();
+                if (csf != null)
+                    csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
 
-            var contentRect = listContent.GetComponent<RectTransform>();
-            if (contentRect != null)
-            {
-                contentRect.anchorMin = new Vector2(0, 1);
-                contentRect.anchorMax = new Vector2(1, 1);
-                contentRect.pivot = new Vector2(0, 1);
-                contentRect.sizeDelta = new Vector2(0, contentRect.sizeDelta.y);
-                contentRect.offsetMin = new Vector2(0, contentRect.offsetMin.y);
-                contentRect.offsetMax = new Vector2(0, contentRect.offsetMax.y);
-            }
+                var contentRect = listContent.GetComponent<RectTransform>();
+                if (contentRect != null)
+                {
+                    contentRect.anchorMin = new Vector2(0, 1);
+                    contentRect.anchorMax = new Vector2(1, 1);
+                    contentRect.pivot = new Vector2(0, 1);
+                    contentRect.sizeDelta = new Vector2(0, contentRect.sizeDelta.y);
+                    contentRect.offsetMin = new Vector2(0, contentRect.offsetMin.y);
+                    contentRect.offsetMax = new Vector2(0, contentRect.offsetMax.y);
+                }
 
-            scrollRect.horizontal = false;
+                scrollRect.horizontal = false;
 
-            var contentLayout = listContent.GetComponent<VerticalLayoutGroup>();
-            if (contentLayout != null)
-            {
-                contentLayout.spacing = 2;
-                contentLayout.padding = new RectOffset(4, 4, 2, 2);
-                contentLayout.childControlHeight = true;
-                contentLayout.childControlWidth = true;
-                contentLayout.childForceExpandHeight = false;
-                contentLayout.childForceExpandWidth = true;
-            }
+                var contentLayout = listContent.GetComponent<VerticalLayoutGroup>();
+                if (contentLayout != null)
+                {
+                    contentLayout.spacing = 2;
+                    contentLayout.padding = new RectOffset(4, 4, 2, 2);
+                    contentLayout.childControlHeight = true;
+                    contentLayout.childControlWidth = true;
+                    contentLayout.childForceExpandHeight = false;
+                    contentLayout.childForceExpandWidth = true;
+                }
 
-            RebuildHierarchyList();
+                RebuildHierarchyList();
 
-            var (closeMask, closeBtn, closeLabel) = UIHelper.RoundedButtonWithLabel(
-                "CloseBtn", "Close (Del)", panelObj.transform,
-                new Color(0.5f, 0.2f, 0.2f), 300, 28, 15, Color.white);
-            var closeRect = closeMask.GetComponent<RectTransform>();
-            closeRect.anchorMin = new Vector2(0.5f, 0);
-            closeRect.anchorMax = new Vector2(0.5f, 0);
-            closeRect.pivot = new Vector2(0.5f, 0);
-            closeRect.anchoredPosition = new Vector2(0, 6);
+                var (closeMask, closeBtn, closeLabel) = UIHelper.RoundedButtonWithLabel(
+                    "CloseBtn", "Close (Del)", panelObj.transform,
+                    new Color(0.5f, 0.2f, 0.2f), 300, 28, 15, Color.white);
+                var closeRect = closeMask.GetComponent<RectTransform>();
+                closeRect.anchorMin = new Vector2(0.5f, 0);
+                closeRect.anchorMax = new Vector2(0.5f, 0);
+                closeRect.pivot = new Vector2(0.5f, 0);
+                closeRect.anchoredPosition = new Vector2(0, 6);
 
-            closeBtn.onClick.AddListener(new Action(() =>
-            {
-                CloseHierarchyPanel();
-                _lastAction = "Hierarchy closed";
-            }));
+                closeBtn.onClick.AddListener(new Action(() =>
+                {
+                    CloseHierarchyPanel();
+                    _lastAction = "Hierarchy closed";
+                }));
 
-            // Free cursor for panel interaction
-            _cursorFree = true;
-            Cursor.lockState = CursorLockMode.None;
-            Cursor.visible = true;
+                // Free cursor for panel interaction
+                _cursorFree = true;
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
 
-            _hierarchyPanel.SetActive(true);
-            _lastAction = $"Hierarchy: {_hierarchyNodes.Count} nodes";
+                _hierarchyPanel.SetActive(true);
+                _lastAction = $"Hierarchy: {_hierarchyNodes.Count} nodes";
             }
             catch (Exception ex)
             {
