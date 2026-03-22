@@ -1,6 +1,7 @@
 #if DEBUG
 using System;
 using System.Collections.Generic;
+using System.IO;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.UI;
@@ -130,14 +131,14 @@ namespace MeshVault.Tools
 
                     // No HLG — manual anchor layout to avoid LayoutElement fighting
 
-                    // Entry info — fills left side, leaves 228px for buttons on right
+                    // Entry info — fills left side, leaves 280px for buttons on right
                     var infoObj = new GameObject("Info");
                     infoObj.transform.SetParent(rowObj.transform, false);
                     var infoRect = infoObj.AddComponent<RectTransform>();
                     infoRect.anchorMin = Vector2.zero;
                     infoRect.anchorMax = Vector2.one;
                     infoRect.offsetMin = new Vector2(6, 2);
-                    infoRect.offsetMax = new Vector2(-228, -2);
+                    infoRect.offsetMax = new Vector2(-280, -2);
                     var infoText = infoObj.AddComponent<TextMeshProUGUI>();
                     infoText.text = $"<b>{entryId}</b>\n<color=#888><size=80%>{entry.Vertices.Length} verts, {entry.Triangles.Length / 3} tris  mat=\"{entry.MaterialName}\"</size></color>";
                     infoText.fontSize = 15;
@@ -147,13 +148,15 @@ namespace MeshVault.Tools
 
                     // Buttons — anchored to right edge of row
                     string capturedId = entryId;
-                    CreateRowButton(rowObj.transform, "Place", -224, -170, new Color(0.15f, 0.4f, 0.15f),
+                    CreateRowButton(rowObj.transform, "Place", -276, -222, new Color(0.15f, 0.4f, 0.15f),
                         new Action(() => SpawnFromDatabase(capturedId)));
-                    CreateRowButton(rowObj.transform, "Preview", -166, -106, new Color(0.3f, 0.2f, 0.5f),
+                    CreateRowButton(rowObj.transform, "Preview", -218, -158, new Color(0.3f, 0.2f, 0.5f),
                         new Action(() => ShowPreviewPanel(capturedId)));
-                    CreateRowButton(rowObj.transform, "Ren", -102, -62, new Color(0.2f, 0.3f, 0.5f),
+                    CreateRowButton(rowObj.transform, "GLB", -154, -114, new Color(0.2f, 0.35f, 0.4f),
+                        new Action(() => ExportEntryAsGlb(capturedId)));
+                    CreateRowButton(rowObj.transform, "Ren", -110, -70, new Color(0.2f, 0.3f, 0.5f),
                         new Action(() => ShowRenameInput(capturedId)));
-                    CreateRowButton(rowObj.transform, "X", -58, -6, new Color(0.5f, 0.15f, 0.15f),
+                    CreateRowButton(rowObj.transform, "X", -66, -6, new Color(0.5f, 0.15f, 0.15f),
                         new Action(() => { MeshVaultAPI.RemoveEntry(capturedId); MeshVaultAPI.WriteDatabase(); ShowSpawnPanel(); }));
                 }
             }
@@ -174,6 +177,16 @@ namespace MeshVault.Tools
             btnRowHLG.childControlHeight = true;
             btnRowHLG.childForceExpandWidth = true;
             btnRowHLG.childForceExpandHeight = true;
+
+            // Decals button
+            var (decalMask, decalBtn, decalLabel) = UIHelper.RoundedButtonWithLabel(
+                "DecalsBtn", "Decals", btnRowObj.transform,
+                new Color(0.3f, 0.2f, 0.5f), 100, 28, 15, Color.white);
+            decalBtn.onClick.AddListener(new Action(() =>
+            {
+                CloseSpawnPanel();
+                ShowDecalPanel();
+            }));
 
             // Clear test spawns button
             var (clearMask, clearBtn, clearLabel) = UIHelper.RoundedButtonWithLabel(
@@ -270,6 +283,56 @@ namespace MeshVault.Tools
 
             ShowEditorPanel();
             _lastAction = $"Positioning \"{dbId}\" — numpad to adjust, Enter to log, Del to cancel";
+        }
+
+        private void ExportEntryAsGlb(string id)
+        {
+            var entry = MeshVaultAPI.GetMesh(id);
+            if (entry == null) { _lastAction = $"Entry \"{id}\" not found"; return; }
+
+            var exportObjects = new List<ExportObject>();
+
+            // Main mesh
+            exportObjects.Add(new ExportObject
+            {
+                Name = id,
+                Vertices = entry.Vertices,
+                Normals = entry.Normals,
+                UVs = entry.UVs,
+                Triangles = entry.Triangles,
+                Material = MeshVaultAPI.FindSceneMaterial(entry.MaterialName)
+            });
+
+            // Child meshes
+            if (entry.ChildMeshes != null)
+            {
+                for (int i = 0; i < entry.ChildMeshes.Length; i++)
+                {
+                    var child = entry.ChildMeshes[i];
+                    if (child.Vertices == null || child.Vertices.Length == 0) continue;
+                    exportObjects.Add(new ExportObject
+                    {
+                        Name = $"{id}_child{i}",
+                        Vertices = child.Vertices,
+                        Normals = child.Normals,
+                        UVs = child.UVs,
+                        Triangles = child.Triangles,
+                        Material = MeshVaultAPI.FindSceneMaterial(child.MaterialName)
+                    });
+                }
+            }
+
+            string exportDir = Path.Combine(Application.dataPath, "..", "UserData", "MeshVault", "Exports");
+            Directory.CreateDirectory(exportDir);
+            string safeName = id;
+            foreach (char c in Path.GetInvalidFileNameChars())
+                safeName = safeName.Replace(c, '_');
+            string glbPath = Path.Combine(exportDir, $"{safeName}.glb");
+
+            string result = GlbExporter.Export(exportObjects, glbPath);
+            _lastAction = result != null
+                ? $"Exported \"{id}\" to GLB"
+                : "GLB export failed — check log";
         }
 
         private int DestroyTestSpawns()

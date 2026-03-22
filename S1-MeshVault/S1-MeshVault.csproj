@@ -58,6 +58,7 @@
 		<Reference Include="UnityEngine.ImageConversionModule"><HintPath>$(GameDllPath)\UnityEngine.ImageConversionModule.dll</HintPath></Reference>
 		<Reference Include="UnityEngine.TextRenderingModule"><HintPath>$(GameDllPath)\UnityEngine.TextRenderingModule.dll</HintPath></Reference>
 		<Reference Include="Unity.TextMeshPro"><HintPath>$(GameDllPath)\Unity.TextMeshPro.dll</HintPath></Reference>
+		<Reference Include="Unity.RenderPipelines.Universal.Runtime"><HintPath>$(GameDllPath)\Unity.RenderPipelines.Universal.Runtime.dll</HintPath></Reference>
 		<Reference Include="MelonLoader"><HintPath>$(MLPath)\MelonLoader.dll</HintPath></Reference>
 		<Reference Include="Assembly-CSharp"><HintPath>$(GameDllPath)\Assembly-CSharp.dll</HintPath></Reference>
 	</ItemGroup>
