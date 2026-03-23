@@ -61,29 +61,44 @@ namespace MeshVault
             var entry = new MeshEntry();
             try
             {
-                entry.Vertices = ParseVec3Array(ExtractArrayValue(json, "vertices"));
-                entry.Normals = ParseVec3Array(ExtractArrayValue(json, "normals"));
-                entry.UVs = ParseVec2Array(ExtractArrayValue(json, "uvs"));
-                entry.Triangles = ParseIntArray(ExtractArrayValue(json, "triangles"));
-                entry.MaterialName = ExtractStringValue(json, "materialName") ?? "Standard";
-                entry.ShaderName = ExtractStringValue(json, "shaderName") ?? "Standard";
-                entry.Color = ParseFloatArray(ExtractArrayValue(json, "color")) ?? MeshVaultAPI.DefaultColor;
-                entry.BoundsCenter = ParseFloatArray(ExtractArrayValue(json, "boundsCenter")) ?? new[] { 0f, 0f, 0f };
-                entry.BoundsSize = ParseFloatArray(ExtractArrayValue(json, "boundsSize")) ?? new[] { 1f, 1f, 1f };
+                // Build a parent-only view that excludes childMeshes content to prevent
+                // child fields (colorTint, emissiveColor, etc.) from bleeding into the parent.
+                string parentJson = json;
+                int childIdx = json.IndexOf("\"childMeshes\"", StringComparison.Ordinal);
+                if (childIdx >= 0)
+                    parentJson = json.Substring(0, childIdx) + "}";
 
-                var triCounts = ParseIntArray(ExtractArrayValue(json, "subMeshTriCounts"));
+                entry.Vertices = ParseVec3Array(ExtractArrayValue(parentJson, "vertices"));
+                entry.Normals = ParseVec3Array(ExtractArrayValue(parentJson, "normals"));
+                entry.UVs = ParseVec2Array(ExtractArrayValue(parentJson, "uvs"));
+                entry.Triangles = ParseIntArray(ExtractArrayValue(parentJson, "triangles"));
+                entry.MaterialName = ExtractStringValue(parentJson, "materialName") ?? "Standard";
+                entry.ShaderName = ExtractStringValue(parentJson, "shaderName") ?? "Standard";
+                entry.Color = ParseFloatArray(ExtractArrayValue(parentJson, "color")) ?? MeshVaultAPI.DefaultColor;
+                entry.BoundsCenter = ParseFloatArray(ExtractArrayValue(parentJson, "boundsCenter")) ?? new[] { 0f, 0f, 0f };
+                entry.BoundsSize = ParseFloatArray(ExtractArrayValue(parentJson, "boundsSize")) ?? new[] { 1f, 1f, 1f };
+
+                var triCounts = ParseIntArray(ExtractArrayValue(parentJson, "subMeshTriCounts"));
                 if (triCounts != null && triCounts.Length > 0)
                 {
                     entry.SubMeshTriCounts = triCounts;
-                    entry.SubMeshMaterialNames = ParseStringArray(ExtractArrayValue(json, "subMeshMaterialNames"));
-                    entry.SubMeshShaderNames = ParseStringArray(ExtractArrayValue(json, "subMeshShaderNames"));
-                    entry.SubMeshTextureNames = ParseStringArray(ExtractArrayValue(json, "subMeshTextureNames"));
-                    entry.SubMeshColorTints = ParseFloat4ArrayOfArrays(ExtractArrayValue(json, "subMeshColorTints"));
+                    entry.SubMeshMaterialNames = ParseStringArray(ExtractArrayValue(parentJson, "subMeshMaterialNames"));
+                    entry.SubMeshShaderNames = ParseStringArray(ExtractArrayValue(parentJson, "subMeshShaderNames"));
+                    entry.SubMeshTextureNames = ParseStringArray(ExtractArrayValue(parentJson, "subMeshTextureNames"));
+                    entry.SubMeshColorTints = ParseFloat4ArrayOfArrays(ExtractArrayValue(parentJson, "subMeshColorTints"));
                 }
 
-                var texName = ExtractStringValue(json, "textureName");
+                var texName = ExtractStringValue(parentJson, "textureName");
                 entry.TextureName = string.IsNullOrEmpty(texName) ? null : texName;
-                entry.BakedColorTint = ParseFloatArray(ExtractArrayValue(json, "bakedColorTint"));
+                entry.BakedColorTint = ParseFloatArray(ExtractArrayValue(parentJson, "bakedColorTint"));
+
+                // Material property overrides (all optional, null = no override)
+                entry.ColorTint = ParseFloatArray(ExtractArrayValue(parentJson, "colorTint"));
+                entry.Metallic = ExtractFloatValue(parentJson, "metallic");
+                entry.Smoothness = ExtractFloatValue(parentJson, "smoothness");
+                entry.EmissiveColor = ParseFloatArray(ExtractArrayValue(parentJson, "emissiveColor"));
+                entry.EmissiveIntensity = ExtractFloatValue(parentJson, "emissiveIntensity");
+
                 entry.ChildMeshes = ParseChildMeshArray(json);
 
                 return entry;
@@ -129,6 +144,33 @@ namespace MeshVault
 
             int pos = idx;
             return ReadJsonString(json, ref pos, json.Length);
+        }
+
+        /// <summary>
+        /// Extracts a single numeric value from a JSON object string by key name.
+        /// Returns null if the key is not found or the value cannot be parsed.
+        /// </summary>
+        internal static float? ExtractFloatValue(string json, string key)
+        {
+            string search = $"\"{key}\"";
+            int idx = json.IndexOf(search, StringComparison.Ordinal);
+            if (idx < 0) return null;
+            idx += search.Length;
+
+            while (idx < json.Length && (json[idx] == ':' || json[idx] == ' ' || json[idx] == '\t'))
+                idx++;
+            if (idx >= json.Length) return null;
+
+            int start = idx;
+            while (idx < json.Length && json[idx] != ',' && json[idx] != '}' && json[idx] != '\n' && json[idx] != '\r')
+                idx++;
+
+            string valueStr = json.Substring(start, idx - start).Trim();
+            if (string.IsNullOrEmpty(valueStr) || valueStr == "null") return null;
+
+            if (float.TryParse(valueStr, NumberStyles.Float, CultureInfo.InvariantCulture, out float result))
+                return result;
+            return null;
         }
 
         private static Vector3[] ParseVec3Array(string arrayStr)
@@ -324,7 +366,12 @@ namespace MeshVault
                         Triangles = ParseIntArray(ExtractArrayValue(objJson, "triangles")),
                         MaterialName = ExtractStringValue(objJson, "materialName") ?? "Standard",
                         ShaderName = ExtractStringValue(objJson, "shaderName") ?? "Standard",
-                        Color = ParseFloatArray(ExtractArrayValue(objJson, "color")) ?? MeshVaultAPI.DefaultColor
+                        Color = ParseFloatArray(ExtractArrayValue(objJson, "color")) ?? MeshVaultAPI.DefaultColor,
+                        ColorTint = ParseFloatArray(ExtractArrayValue(objJson, "colorTint")),
+                        Metallic = ExtractFloatValue(objJson, "metallic"),
+                        Smoothness = ExtractFloatValue(objJson, "smoothness"),
+                        EmissiveColor = ParseFloatArray(ExtractArrayValue(objJson, "emissiveColor")),
+                        EmissiveIntensity = ExtractFloatValue(objJson, "emissiveIntensity")
                     };
                     entries.Add(entry);
                 }

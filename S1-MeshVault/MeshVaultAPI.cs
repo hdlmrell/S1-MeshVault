@@ -27,6 +27,8 @@ namespace MeshVault
         private const string ShaderPropSmoothness = "_Smoothness";
         private const float DefaultMetallic = 0f;
         private const float DefaultSmoothness = 0.1f;
+        private const string ShaderPropEmissionColor = "_EmissionColor";
+        private const string ShaderKeywordEmission = "_EMISSION";
         private const float BakedSmoothness = 0f;
         internal const string DecalPropBaseMap = "_Base_Map";
         internal const string DecalPropColor = "_Color";
@@ -622,45 +624,55 @@ namespace MeshVault
                 materials = new Material[subMeshCount];
                 for (int s = 0; s < subMeshCount; s++)
                 {
+                    Material selectedMat = null;
+                    bool isNew = false;
+
                     // Material override takes priority
                     if (materialOverrides != null && s < materialOverrides.Length
                         && materialOverrides[s] != null)
                     {
-                        var overrideMat = FindSceneMaterial(materialOverrides[s]);
-                        if (overrideMat != null)
-                        {
-                            materials[s] = overrideMat;
-                            continue;
-                        }
+                        selectedMat = FindSceneMaterial(materialOverrides[s]);
                     }
 
-                    string shaderName = (entry.SubMeshShaderNames != null && s < entry.SubMeshShaderNames.Length)
-                        ? entry.SubMeshShaderNames[s] : "";
-                    bool isWorldspaceUV = shaderName.Contains(WorldspaceUVShaderTag);
-
-                    if (isWorldspaceUV)
+                    // Baked material path (WorldspaceUV shader)
+                    if (selectedMat == null)
                     {
-                        string texName = (entry.SubMeshTextureNames != null && s < entry.SubMeshTextureNames.Length
-                            && !string.IsNullOrEmpty(entry.SubMeshTextureNames[s]))
-                            ? entry.SubMeshTextureNames[s] : entry.TextureName;
-                        float[] colorTint = (entry.SubMeshColorTints != null && s < entry.SubMeshColorTints.Length
-                            && entry.SubMeshColorTints[s] != null)
-                            ? entry.SubMeshColorTints[s] : entry.BakedColorTint;
-
-                        if (!string.IsNullOrEmpty(texName))
+                        string shaderName = (entry.SubMeshShaderNames != null && s < entry.SubMeshShaderNames.Length)
+                            ? entry.SubMeshShaderNames[s] : "";
+                        if (shaderName.Contains(WorldspaceUVShaderTag))
                         {
-                            var bakedMat = CreateBakedMaterial(texName, colorTint);
-                            if (bakedMat != null)
+                            string texName = (entry.SubMeshTextureNames != null && s < entry.SubMeshTextureNames.Length
+                                && !string.IsNullOrEmpty(entry.SubMeshTextureNames[s]))
+                                ? entry.SubMeshTextureNames[s] : entry.TextureName;
+                            float[] bakedTint = (entry.SubMeshColorTints != null && s < entry.SubMeshColorTints.Length
+                                && entry.SubMeshColorTints[s] != null)
+                                ? entry.SubMeshColorTints[s] : entry.BakedColorTint;
+
+                            if (!string.IsNullOrEmpty(texName))
                             {
-                                materials[s] = bakedMat;
-                                continue;
+                                selectedMat = CreateBakedMaterial(texName, bakedTint);
+                                isNew = selectedMat != null;
                             }
                         }
                     }
 
-                    string matName = (entry.SubMeshMaterialNames != null && s < entry.SubMeshMaterialNames.Length)
-                        ? entry.SubMeshMaterialNames[s] : entry.MaterialName;
-                    materials[s] = FindSceneMaterial(matName) ?? CreateFallbackMaterial(entry);
+                    // Scene material or fallback
+                    if (selectedMat == null)
+                    {
+                        string matName = (entry.SubMeshMaterialNames != null && s < entry.SubMeshMaterialNames.Length)
+                            ? entry.SubMeshMaterialNames[s] : entry.MaterialName;
+                        selectedMat = FindSceneMaterial(matName);
+                        if (selectedMat == null)
+                        {
+                            selectedMat = CreateFallbackMaterial(entry);
+                            isNew = true;
+                        }
+                    }
+
+                    // Apply JSON material property overrides
+                    materials[s] = ApplyMaterialOverrides(selectedMat,
+                        entry.ColorTint, entry.Metallic, entry.Smoothness,
+                        entry.EmissiveColor, entry.EmissiveIntensity, isNew);
                 }
             }
             else
@@ -669,27 +681,34 @@ namespace MeshVault
                 mesh.triangles = entry.Triangles;
 
                 // Material override for single-material entries (index 0)
-                Material singleOverride = null;
+                Material selectedMat = null;
+                bool isNew = false;
                 if (materialOverrides != null && materialOverrides.Length > 0
                     && materialOverrides[0] != null)
                 {
-                    singleOverride = FindSceneMaterial(materialOverrides[0]);
+                    selectedMat = FindSceneMaterial(materialOverrides[0]);
                 }
 
-                if (singleOverride != null)
+                if (selectedMat == null && !string.IsNullOrEmpty(entry.TextureName))
                 {
-                    materials = new[] { singleOverride };
+                    selectedMat = CreateBakedMaterial(entry.TextureName, entry.BakedColorTint);
+                    isNew = selectedMat != null;
                 }
-                else if (!string.IsNullOrEmpty(entry.TextureName))
+
+                if (selectedMat == null)
                 {
-                    var bakedMat = CreateBakedMaterial(entry.TextureName, entry.BakedColorTint);
-                    materials = new[] { bakedMat ?? CreateFallbackMaterial(entry) };
+                    selectedMat = FindSceneMaterial(entry.MaterialName);
+                    if (selectedMat == null)
+                    {
+                        selectedMat = CreateFallbackMaterial(entry);
+                        isNew = true;
+                    }
                 }
-                else
-                {
-                    var sceneMat = FindSceneMaterial(entry.MaterialName);
-                    materials = new[] { sceneMat ?? CreateFallbackMaterial(entry) };
-                }
+
+                // Apply JSON material property overrides
+                materials = new[] { ApplyMaterialOverrides(selectedMat,
+                    entry.ColorTint, entry.Metallic, entry.Smoothness,
+                    entry.EmissiveColor, entry.EmissiveIntensity, isNew) };
             }
 
             mesh.RecalculateBounds();
@@ -745,29 +764,36 @@ namespace MeshVault
                         childOverride = FindSceneMaterial(materialOverrides[overrideIdx]);
                     }
 
+                    Material childMat;
+                    bool childIsNew = false;
                     if (childOverride != null)
                     {
-                        childMR.sharedMaterial = childOverride;
+                        childMat = childOverride;
                     }
                     else if (FindSceneMaterial(child.MaterialName) is Material sceneMat)
                     {
-                        childMR.sharedMaterial = sceneMat;
+                        childMat = sceneMat;
                     }
                     else
                     {
                         var fallbackShader = Shader.Find(URPLitShader)
                                           ?? Shader.Find(StandardShader);
-                        var fallbackMat = new Material(fallbackShader);
+                        childMat = new Material(fallbackShader);
                         var col = child.Color ?? DefaultColor;
-                        fallbackMat.color = new UnityEngine.Color(col[0], col[1], col[2], col[3]);
-                        if (fallbackMat.HasProperty(ShaderPropBaseColor))
-                            fallbackMat.SetColor(ShaderPropBaseColor, fallbackMat.color);
-                        if (fallbackMat.HasProperty(ShaderPropMetallic))
-                            fallbackMat.SetFloat(ShaderPropMetallic, DefaultMetallic);
-                        if (fallbackMat.HasProperty(ShaderPropSmoothness))
-                            fallbackMat.SetFloat(ShaderPropSmoothness, DefaultSmoothness);
-                        childMR.sharedMaterial = fallbackMat;
+                        childMat.color = new UnityEngine.Color(col[0], col[1], col[2], col[3]);
+                        if (childMat.HasProperty(ShaderPropBaseColor))
+                            childMat.SetColor(ShaderPropBaseColor, childMat.color);
+                        if (childMat.HasProperty(ShaderPropMetallic))
+                            childMat.SetFloat(ShaderPropMetallic, DefaultMetallic);
+                        if (childMat.HasProperty(ShaderPropSmoothness))
+                            childMat.SetFloat(ShaderPropSmoothness, DefaultSmoothness);
+                        childIsNew = true;
                     }
+
+                    // Apply JSON material property overrides for child mesh
+                    childMR.sharedMaterial = ApplyMaterialOverrides(childMat,
+                        child.ColorTint, child.Metallic, child.Smoothness,
+                        child.EmissiveColor, child.EmissiveIntensity, childIsNew);
                 }
             }
 
@@ -1004,6 +1030,69 @@ namespace MeshVault
             return mat;
         }
 
+        /// <summary>
+        /// Applies material property overrides (color tint, metallic, smoothness, emission).
+        /// Clones the material if any override is set to avoid mutating shared materials.
+        /// Returns the original material if no overrides are present.
+        /// </summary>
+        /// <param name="alreadyCloned">True if the material is already a fresh instance
+        /// (e.g. from CreateBakedMaterial/CreateFallbackMaterial) and does not need cloning.</param>
+        private static Material ApplyMaterialOverrides(Material mat, float[] colorTint,
+            float? metallic, float? smoothness, float[] emissiveColor, float? emissiveIntensity,
+            bool alreadyCloned = false)
+        {
+            if (mat == null) return null;
+
+            bool hasAny = colorTint != null || metallic.HasValue
+                || smoothness.HasValue || emissiveColor != null || emissiveIntensity.HasValue;
+            if (!hasAny) return mat;
+
+            var cloned = alreadyCloned ? mat : new Material(mat);
+
+            if (colorTint != null && colorTint.Length >= 4)
+            {
+                var existing = cloned.HasProperty(ShaderPropBaseColor)
+                    ? cloned.GetColor(ShaderPropBaseColor) : cloned.color;
+                var tint = new UnityEngine.Color(
+                    existing.r * colorTint[0], existing.g * colorTint[1],
+                    existing.b * colorTint[2], existing.a * colorTint[3]);
+                cloned.color = tint;
+                if (cloned.HasProperty(ShaderPropBaseColor))
+                    cloned.SetColor(ShaderPropBaseColor, tint);
+            }
+
+            if (metallic.HasValue && cloned.HasProperty(ShaderPropMetallic))
+                cloned.SetFloat(ShaderPropMetallic, metallic.Value);
+
+            if (smoothness.HasValue && cloned.HasProperty(ShaderPropSmoothness))
+                cloned.SetFloat(ShaderPropSmoothness, smoothness.Value);
+
+            if (emissiveColor != null && emissiveColor.Length >= 3)
+            {
+                // If the source shader doesn't support emission, swap to URP Lit
+                if (!cloned.HasProperty(ShaderPropEmissionColor))
+                {
+                    var litShader = Shader.Find(URPLitShader);
+                    if (litShader != null)
+                        cloned.shader = litShader;
+                }
+
+                if (cloned.HasProperty(ShaderPropEmissionColor))
+                {
+                    float intensity = emissiveIntensity ?? 1.0f;
+                    var emission = new UnityEngine.Color(
+                        emissiveColor[0] * intensity,
+                        emissiveColor[1] * intensity,
+                        emissiveColor[2] * intensity);
+                    cloned.EnableKeyword(ShaderKeywordEmission);
+                    cloned.SetColor(ShaderPropEmissionColor, emission);
+                    cloned.globalIlluminationFlags = MaterialGlobalIlluminationFlags.BakedEmissive;
+                }
+            }
+
+            return cloned;
+        }
+
 #if DEBUG
         // ═══════════════════════════════════════════════════════════════
         // Write / CRUD API (Debug builds only)
@@ -1137,14 +1226,51 @@ namespace MeshVault
                     }
 
                     // Legacy baked texture name
-                    bool hasColorTint = e.BakedColorTint != null && e.BakedColorTint.Length >= 4;
+                    bool hasBakedTint = e.BakedColorTint != null && e.BakedColorTint.Length >= 4;
+                    bool hasOverrides = e.ColorTint != null || e.Metallic.HasValue
+                        || e.Smoothness.HasValue || e.EmissiveColor != null || e.EmissiveIntensity.HasValue;
                     bool hasChildren = e.ChildMeshes != null && e.ChildMeshes.Length > 0;
+                    bool hasMore = hasBakedTint || hasOverrides || hasChildren;
                     sb.Append($"    \"textureName\": \"{JsonEscape(e.TextureName ?? "")}\"");
-                    if (hasColorTint || hasChildren) sb.AppendLine(","); else sb.AppendLine();
+                    if (hasMore) sb.AppendLine(","); else sb.AppendLine();
 
-                    if (hasColorTint)
+                    if (hasBakedTint)
                     {
+                        hasMore = hasOverrides || hasChildren;
                         sb.Append($"    \"bakedColorTint\": [{e.BakedColorTint[0]},{e.BakedColorTint[1]},{e.BakedColorTint[2]},{e.BakedColorTint[3]}]");
+                        if (hasMore) sb.AppendLine(","); else sb.AppendLine();
+                    }
+
+                    // Material property overrides
+                    if (e.ColorTint != null && e.ColorTint.Length >= 4)
+                    {
+                        hasMore = e.Metallic.HasValue || e.Smoothness.HasValue
+                            || e.EmissiveColor != null || e.EmissiveIntensity.HasValue || hasChildren;
+                        sb.Append($"    \"colorTint\": [{e.ColorTint[0]},{e.ColorTint[1]},{e.ColorTint[2]},{e.ColorTint[3]}]");
+                        if (hasMore) sb.AppendLine(","); else sb.AppendLine();
+                    }
+                    if (e.Metallic.HasValue)
+                    {
+                        hasMore = e.Smoothness.HasValue || e.EmissiveColor != null
+                            || e.EmissiveIntensity.HasValue || hasChildren;
+                        sb.Append($"    \"metallic\": {e.Metallic.Value}");
+                        if (hasMore) sb.AppendLine(","); else sb.AppendLine();
+                    }
+                    if (e.Smoothness.HasValue)
+                    {
+                        hasMore = e.EmissiveColor != null || e.EmissiveIntensity.HasValue || hasChildren;
+                        sb.Append($"    \"smoothness\": {e.Smoothness.Value}");
+                        if (hasMore) sb.AppendLine(","); else sb.AppendLine();
+                    }
+                    if (e.EmissiveColor != null && e.EmissiveColor.Length >= 3)
+                    {
+                        hasMore = e.EmissiveIntensity.HasValue || hasChildren;
+                        sb.Append($"    \"emissiveColor\": [{e.EmissiveColor[0]},{e.EmissiveColor[1]},{e.EmissiveColor[2]}]");
+                        if (hasMore) sb.AppendLine(","); else sb.AppendLine();
+                    }
+                    if (e.EmissiveIntensity.HasValue)
+                    {
+                        sb.Append($"    \"emissiveIntensity\": {e.EmissiveIntensity.Value}");
                         if (hasChildren) sb.AppendLine(","); else sb.AppendLine();
                     }
 
@@ -1191,7 +1317,42 @@ namespace MeshVault
 
                             sb.AppendLine($"        \"materialName\": \"{JsonEscape(child.MaterialName)}\",");
                             sb.AppendLine($"        \"shaderName\": \"{JsonEscape(child.ShaderName)}\",");
-                            sb.AppendLine($"        \"color\": [{child.Color[0]},{child.Color[1]},{child.Color[2]},{child.Color[3]}]");
+
+                            bool childHasOverrides = child.ColorTint != null || child.Metallic.HasValue
+                                || child.Smoothness.HasValue || child.EmissiveColor != null
+                                || child.EmissiveIntensity.HasValue;
+                            sb.Append($"        \"color\": [{child.Color[0]},{child.Color[1]},{child.Color[2]},{child.Color[3]}]");
+                            if (childHasOverrides) sb.AppendLine(","); else sb.AppendLine();
+
+                            if (child.ColorTint != null && child.ColorTint.Length >= 4)
+                            {
+                                bool childHasMore = child.Metallic.HasValue || child.Smoothness.HasValue
+                                    || child.EmissiveColor != null || child.EmissiveIntensity.HasValue;
+                                sb.Append($"        \"colorTint\": [{child.ColorTint[0]},{child.ColorTint[1]},{child.ColorTint[2]},{child.ColorTint[3]}]");
+                                if (childHasMore) sb.AppendLine(","); else sb.AppendLine();
+                            }
+                            if (child.Metallic.HasValue)
+                            {
+                                bool childHasMore = child.Smoothness.HasValue || child.EmissiveColor != null
+                                    || child.EmissiveIntensity.HasValue;
+                                sb.Append($"        \"metallic\": {child.Metallic.Value}");
+                                if (childHasMore) sb.AppendLine(","); else sb.AppendLine();
+                            }
+                            if (child.Smoothness.HasValue)
+                            {
+                                bool childHasMore = child.EmissiveColor != null || child.EmissiveIntensity.HasValue;
+                                sb.Append($"        \"smoothness\": {child.Smoothness.Value}");
+                                if (childHasMore) sb.AppendLine(","); else sb.AppendLine();
+                            }
+                            if (child.EmissiveColor != null && child.EmissiveColor.Length >= 3)
+                            {
+                                sb.Append($"        \"emissiveColor\": [{child.EmissiveColor[0]},{child.EmissiveColor[1]},{child.EmissiveColor[2]}]");
+                                if (child.EmissiveIntensity.HasValue) sb.AppendLine(","); else sb.AppendLine();
+                            }
+                            if (child.EmissiveIntensity.HasValue)
+                            {
+                                sb.AppendLine($"        \"emissiveIntensity\": {child.EmissiveIntensity.Value}");
+                            }
 
                             sb.AppendLine(cm < e.ChildMeshes.Length - 1 ? "      }," : "      }");
                         }

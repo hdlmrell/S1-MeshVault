@@ -14,6 +14,13 @@ namespace MeshVault
         public string MaterialName;
         public string ShaderName;
         public float[] Color; // RGBA
+
+        // Material property overrides (null = no override)
+        public float[] ColorTint;
+        public float? Metallic;
+        public float? Smoothness;
+        public float[] EmissiveColor;
+        public float? EmissiveIntensity;
     }
 
     /// <summary>
@@ -44,6 +51,13 @@ namespace MeshVault
         // Per-submesh baked material data
         public string[] SubMeshTextureNames;
         public float[][] SubMeshColorTints;
+
+        // Material property overrides (null = no override, apply to all submeshes)
+        public float[] ColorTint;
+        public float? Metallic;
+        public float? Smoothness;
+        public float[] EmissiveColor;
+        public float? EmissiveIntensity;
 
         // Child meshes
         public ChildMeshEntry[] ChildMeshes;
