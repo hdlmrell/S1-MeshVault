@@ -37,6 +37,7 @@ namespace MeshVault
         private static Dictionary<string, MeshEntry> _cache;
         private static bool _loaded;
 
+        private static readonly Dictionary<string, string> _registeredPrefixes = new Dictionary<string, string>();
         private static readonly Dictionary<string, Material> _materialCache = new Dictionary<string, Material>();
         private static readonly Dictionary<string, Texture> _textureCache = new Dictionary<string, Texture>();
 
@@ -257,6 +258,109 @@ namespace MeshVault
         private static void EnsureLoaded()
         {
             if (!_loaded) Init();
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Mod Registration
+        // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Registers mesh entries from a JSON string under a mod-owned prefix.
+        /// Each mod must claim a unique prefix (first come, first served). All entry IDs
+        /// in the JSON must start with "<paramref name="prefix"/>_".
+        /// </summary>
+        /// <param name="prefix">Lowercase alphanumeric prefix (e.g. "otc"). Must not contain underscores or spaces.</param>
+        /// <param name="modName">Display name of the registering mod (for logging and conflict messages).</param>
+        /// <param name="json">JSON string containing a mesh database (same format as MeshDatabase.json).</param>
+        /// <returns>The number of entries registered, or -1 if registration failed.</returns>
+        public static int RegisterMeshes(string prefix, string modName, string json)
+        {
+            EnsureLoaded();
+
+            if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(modName) || string.IsNullOrEmpty(json))
+            {
+                Melon<MeshVaultPlugin>.Logger.Error("[MeshVaultAPI] RegisterMeshes: prefix, modName, and json are required");
+                return -1;
+            }
+
+            // Validate prefix format — lowercase alphanumeric only, no underscores
+            for (int i = 0; i < prefix.Length; i++)
+            {
+                char c = prefix[i];
+                if (!char.IsLetterOrDigit(c) || char.IsUpper(c))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Error(
+                        $"[MeshVaultAPI] RegisterMeshes: prefix \"{prefix}\" is invalid — must be lowercase alphanumeric only");
+                    return -1;
+                }
+            }
+
+            // Check prefix ownership
+            if (_registeredPrefixes.TryGetValue(prefix, out string existingOwner))
+            {
+                Melon<MeshVaultPlugin>.Logger.Error(
+                    $"[MeshVaultAPI] RegisterMeshes: prefix \"{prefix}\" is already claimed by \"{existingOwner}\"");
+                return -1;
+            }
+
+            // Parse into a temporary dictionary
+            var temp = new Dictionary<string, MeshEntry>();
+            try
+            {
+                JsonParser.ParseDatabase(json, temp);
+            }
+            catch (Exception ex)
+            {
+                Melon<MeshVaultPlugin>.Logger.Error(
+                    $"[MeshVaultAPI] RegisterMeshes: failed to parse JSON from \"{modName}\": {ex.Message}");
+                return -1;
+            }
+
+            if (temp.Count == 0)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning(
+                    $"[MeshVaultAPI] RegisterMeshes: JSON from \"{modName}\" contained no entries");
+                return 0;
+            }
+
+            // Validate all IDs use the claimed prefix
+            string requiredPrefix = prefix + "_";
+            foreach (string id in temp.Keys)
+            {
+                if (!id.StartsWith(requiredPrefix))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Error(
+                        $"[MeshVaultAPI] RegisterMeshes: entry \"{id}\" does not start with \"{requiredPrefix}\" — all entries from \"{modName}\" must use this prefix");
+                    return -1;
+                }
+            }
+
+            // Claim prefix and merge into cache
+            _registeredPrefixes[prefix] = modName;
+            int count = 0;
+            foreach (var kvp in temp)
+            {
+                if (_cache.ContainsKey(kvp.Key))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning(
+                        $"[MeshVaultAPI] RegisterMeshes: entry \"{kvp.Key}\" already exists — skipping");
+                    continue;
+                }
+                _cache[kvp.Key] = kvp.Value;
+                count++;
+            }
+
+            Melon<MeshVaultPlugin>.Logger.Msg(
+                $"[MeshVaultAPI] Registered {count} mesh entries from \"{modName}\" (prefix: \"{prefix}\")");
+            return count;
+        }
+
+        /// <summary>
+        /// Returns true if the given prefix has been claimed by a mod.
+        /// </summary>
+        public static bool IsPrefixRegistered(string prefix)
+        {
+            return _registeredPrefixes.ContainsKey(prefix);
         }
 
         // ═══════════════════════════════════════════════════════════════
