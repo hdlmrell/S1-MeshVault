@@ -1,6 +1,8 @@
 #if DEBUG
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Security.Cryptography;
 using MelonLoader;
 using UnityEngine;
 using UnityEngine.Rendering.Universal;
@@ -32,6 +34,8 @@ namespace MeshVault.Tools
         private GameObject _decalColorPicker;
         private List<Image> _tintSwatchBorders = new List<Image>();
         private string _previewDecalTexName;
+        private GameObject _decalImportDialog;
+        private bool _importedDecalsLoaded;
 
         // Texture name prefixes to scan for
         private static readonly string[] _decalPrefixes = { "Graffiti_", "Decals ", "decals ", "SplatAlpha" };
@@ -42,6 +46,11 @@ namespace MeshVault.Tools
 
         private const float DecalCellSize = 120f;
         private const float DecalCellSpacing = 4f;
+        private const string DecalImportLogPrefix = "[DecalImport]";
+        private const int HashByteCount = 4;
+
+        private static readonly HashSet<string> _supportedImageExtensions =
+            new HashSet<string>(StringComparer.OrdinalIgnoreCase) { ".png", ".jpg", ".jpeg" };
 
         // Tint preset colors
         private static readonly (string name, Color color)[] _tintPresets =
@@ -245,6 +254,11 @@ namespace MeshVault.Tools
                 _lastAction = destroyed > 0 ? $"Cleared {destroyed} decal(s)" : "No decals to clear";
                 ShowDecalPanel();
             }));
+
+            var (importMask, importBtn, importLabel) = UIHelper.RoundedButtonWithLabel(
+                "ImportBtn", "Import Custom", btnRowObj.transform,
+                new Color(0.2f, 0.35f, 0.5f), 140, 28, 15, Color.white);
+            importBtn.onClick.AddListener(new Action(() => ShowDecalImportDialog()));
 
             var (closeMask, closeBtn, closeLabel) = UIHelper.RoundedButtonWithLabel(
                 "CloseBtn", "Close (Del)", btnRowObj.transform,
@@ -639,6 +653,13 @@ namespace MeshVault.Tools
 
         private void ScanDecalTextures()
         {
+            // Load previously imported custom decals from disk (once per session)
+            if (!_importedDecalsLoaded)
+            {
+                LoadImportedDecals();
+                _importedDecalsLoaded = true;
+            }
+
             _decalTextures = new List<Texture2D>();
             var allTextures = Resources.FindObjectsOfTypeAll<Texture2D>();
 
@@ -672,8 +693,17 @@ namespace MeshVault.Tools
                 _decalTextures.Add(tex);
             }
 
+            // Include registered decals from mods
+            var registered = MeshVaultAPI.ListRegisteredDecals();
+            foreach (var id in registered)
+            {
+                var regTex = MeshVaultAPI.GetRegisteredDecal(id);
+                if (regTex != null && !_decalTextures.Contains(regTex))
+                    _decalTextures.Add(regTex);
+            }
+
             _decalTextures.Sort((a, b) => string.Compare(a.name, b.name, StringComparison.OrdinalIgnoreCase));
-            Melon<MeshVaultPlugin>.Logger.Msg($"[DecalBrowser] Found {_decalTextures.Count} decal textures");
+            Melon<MeshVaultPlugin>.Logger.Msg($"[DecalBrowser] Found {_decalTextures.Count} decal textures ({registered.Length} registered)");
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -757,8 +787,8 @@ namespace MeshVault.Tools
 
             if (Physics.Raycast(ray, out RaycastHit hit, 100f, mask))
             {
-                // Position at half the projection depth off the wall so the box straddles the surface
-                spawnPos = hit.point + hit.normal * (MeshVaultAPI.DecalDepth * 0.5f);
+                // Position slightly off the wall — small offset to avoid z-fighting
+                spawnPos = hit.point + hit.normal * 0.01f;
                 Vector3 up = Mathf.Abs(Vector3.Dot(hit.normal, Vector3.up)) > 0.99f
                     ? Vector3.forward : Vector3.up;
                 spawnRot = Quaternion.LookRotation(-hit.normal, up);
@@ -817,6 +847,11 @@ namespace MeshVault.Tools
 
         private void CloseDecalPanel()
         {
+            if (_decalImportDialog != null)
+            {
+                UnityEngine.Object.Destroy(_decalImportDialog);
+                _decalImportDialog = null;
+            }
             if (_decalColorPicker != null)
             {
                 UnityEngine.Object.Destroy(_decalColorPicker);
@@ -834,6 +869,298 @@ namespace MeshVault.Tools
                 Cursor.lockState = CursorLockMode.Locked;
                 Cursor.visible = false;
             }
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Import Custom Decal
+        // ═══════════════════════════════════════════════════════════════
+
+        private static string _decalImportDir =>
+            Path.Combine(Application.dataPath, "..", "UserData", "MeshVault", "Decals");
+
+        /// <summary>
+        /// Shows a dialog for importing a custom decal texture from a file path.
+        /// The file is copied to UserData/MeshVault/Decals/ with a content-based hash prefix.
+        /// </summary>
+        private void ShowDecalImportDialog()
+        {
+            if (_decalImportDialog != null)
+                UnityEngine.Object.Destroy(_decalImportDialog);
+
+            _decalImportDialog = new GameObject("DecalImportDialog");
+            _decalImportDialog.transform.SetParent(_decalPanel.transform, false);
+            var overlayImg = _decalImportDialog.AddComponent<Image>();
+            overlayImg.color = new Color(0, 0, 0, 0.6f);
+            overlayImg.raycastTarget = true;
+            var overlayRect = _decalImportDialog.GetComponent<RectTransform>();
+            overlayRect.anchorMin = Vector2.zero;
+            overlayRect.anchorMax = Vector2.one;
+            overlayRect.offsetMin = Vector2.zero;
+            overlayRect.offsetMax = Vector2.zero;
+
+            var dialogObj = UIHelper.Panel("ImportDialog", _decalImportDialog.transform,
+                new Color(0.12f, 0.12f, 0.15f));
+            var dialogRect = dialogObj.GetComponent<RectTransform>();
+            dialogRect.anchorMin = new Vector2(0.2f, 0.35f);
+            dialogRect.anchorMax = new Vector2(0.8f, 0.65f);
+
+            var title = UIHelper.Text("Title", "<b>Import Custom Decal</b>",
+                dialogObj.transform, 16, TextAlignmentOptions.Center);
+            var titleRect = title.GetComponent<RectTransform>();
+            titleRect.anchorMin = new Vector2(0, 0.82f);
+            titleRect.anchorMax = new Vector2(1, 1);
+            titleRect.offsetMin = new Vector2(8, 0);
+            titleRect.offsetMax = new Vector2(-8, -4);
+
+            var hint = UIHelper.Text("Hint",
+                "Paste the full path to a PNG or JPG file:",
+                dialogObj.transform, 13, TextAlignmentOptions.MidlineLeft);
+            var hintRect = hint.GetComponent<RectTransform>();
+            hintRect.anchorMin = new Vector2(0, 0.62f);
+            hintRect.anchorMax = new Vector2(1, 0.80f);
+            hintRect.offsetMin = new Vector2(12, 0);
+            hintRect.offsetMax = new Vector2(-12, 0);
+
+            // Path input
+            var inputBarObj = new GameObject("PathInput");
+            inputBarObj.transform.SetParent(dialogObj.transform, false);
+            var inputBg = inputBarObj.AddComponent<Image>();
+            inputBg.color = new Color(0.08f, 0.08f, 0.08f);
+            var inputRect = inputBarObj.GetComponent<RectTransform>();
+            inputRect.anchorMin = new Vector2(0, 0.38f);
+            inputRect.anchorMax = new Vector2(1, 0.60f);
+            inputRect.offsetMin = new Vector2(12, 4);
+            inputRect.offsetMax = new Vector2(-12, -4);
+
+            var inputTextObj = new GameObject("InputText");
+            inputTextObj.transform.SetParent(inputBarObj.transform, false);
+            var inputTextRect = inputTextObj.AddComponent<RectTransform>();
+            inputTextRect.anchorMin = Vector2.zero;
+            inputTextRect.anchorMax = Vector2.one;
+            inputTextRect.offsetMin = new Vector2(6, 2);
+            inputTextRect.offsetMax = new Vector2(-6, -2);
+            var inputTmp = inputTextObj.AddComponent<TextMeshProUGUI>();
+            inputTmp.fontSize = 13;
+            inputTmp.color = Color.white;
+            inputTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            inputTmp.richText = false;
+
+            var phObj = new GameObject("Placeholder");
+            phObj.transform.SetParent(inputBarObj.transform, false);
+            var phRect = phObj.AddComponent<RectTransform>();
+            phRect.anchorMin = Vector2.zero;
+            phRect.anchorMax = Vector2.one;
+            phRect.offsetMin = new Vector2(6, 2);
+            phRect.offsetMax = new Vector2(-6, -2);
+            var phTmp = phObj.AddComponent<TextMeshProUGUI>();
+            phTmp.fontSize = 13;
+            phTmp.color = new Color(1f, 1f, 1f, 0.3f);
+            phTmp.alignment = TextAlignmentOptions.MidlineLeft;
+            phTmp.text = "C:\\path\\to\\decal.png";
+            phTmp.fontStyle = FontStyles.Italic;
+
+            var pathInput = inputBarObj.AddComponent<TMP_InputField>();
+            pathInput.textComponent = inputTmp;
+            pathInput.placeholder = phTmp;
+
+            // Status label
+            var statusLabel = UIHelper.Text("Status", "",
+                dialogObj.transform, 12, TextAlignmentOptions.Center);
+            var statusRect = statusLabel.GetComponent<RectTransform>();
+            statusRect.anchorMin = new Vector2(0, 0.22f);
+            statusRect.anchorMax = new Vector2(1, 0.38f);
+            statusRect.offsetMin = new Vector2(12, 0);
+            statusRect.offsetMax = new Vector2(-12, 0);
+            statusLabel.color = new Color(1f, 0.8f, 0.3f);
+
+            // Button row
+            var btnRow = new GameObject("BtnRow");
+            btnRow.transform.SetParent(dialogObj.transform, false);
+            var btnRowRect = btnRow.AddComponent<RectTransform>();
+            btnRowRect.anchorMin = new Vector2(0, 0);
+            btnRowRect.anchorMax = new Vector2(1, 0.22f);
+            btnRowRect.offsetMin = new Vector2(8, 4);
+            btnRowRect.offsetMax = new Vector2(-8, -2);
+            var btnRowHLG = btnRow.AddComponent<HorizontalLayoutGroup>();
+            btnRowHLG.spacing = 6;
+            btnRowHLG.childControlWidth = true;
+            btnRowHLG.childControlHeight = true;
+            btnRowHLG.childForceExpandWidth = true;
+            btnRowHLG.childForceExpandHeight = true;
+
+            var (_, importBtn, _) = UIHelper.RoundedButtonWithLabel(
+                "ImportBtn", "Import", btnRow.transform,
+                new Color(0.15f, 0.4f, 0.15f), 80, 24, 14, Color.white);
+            importBtn.onClick.AddListener(new Action(() =>
+            {
+                string result = ImportDecalFromFile(pathInput.text);
+                if (result != null)
+                {
+                    statusLabel.text = $"<color=#88ff88>{result}</color>";
+                    // Rebuild the decal list so the new texture appears
+                    _decalTextures = null;
+                    ShowDecalPanel();
+                }
+                else
+                {
+                    statusLabel.text = "<color=#ff8888>Import failed — check log</color>";
+                }
+            }));
+
+            var (_, cancelBtn, _) = UIHelper.RoundedButtonWithLabel(
+                "CancelBtn", "Cancel", btnRow.transform,
+                new Color(0.4f, 0.2f, 0.2f), 80, 24, 14, Color.white);
+            cancelBtn.onClick.AddListener(new Action(() =>
+            {
+                UnityEngine.Object.Destroy(_decalImportDialog);
+                _decalImportDialog = null;
+            }));
+        }
+
+        /// <summary>
+        /// Imports a decal texture from a file path. Copies the file to UserData/MeshVault/Decals/
+        /// with a content-based SHA256 hash prefix to prevent duplicates.
+        /// </summary>
+        /// <returns>A success message, or null on failure.</returns>
+        private string ImportDecalFromFile(string filePath)
+        {
+            if (string.IsNullOrEmpty(filePath))
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} No file path provided");
+                return null;
+            }
+
+            filePath = filePath.Trim().Trim('"');
+            if (!File.Exists(filePath))
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} File not found: {filePath}");
+                return null;
+            }
+
+            string ext = Path.GetExtension(filePath).ToLowerInvariant();
+            if (!_supportedImageExtensions.Contains(ext))
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} Unsupported format: {ext} (use PNG or JPG)");
+                return null;
+            }
+
+            byte[] fileData;
+            try
+            {
+                fileData = File.ReadAllBytes(filePath);
+            }
+            catch (Exception ex)
+            {
+                Melon<MeshVaultPlugin>.Logger.Error($"{DecalImportLogPrefix} Failed to read file: {ex.Message}");
+                return null;
+            }
+
+            // Compute content-based hash for deduplication
+            string hashPrefix;
+            using (var sha = SHA256.Create())
+            {
+                byte[] hash = sha.ComputeHash(fileData);
+                hashPrefix = BitConverter.ToString(hash, 0, HashByteCount).Replace("-", "").ToLowerInvariant();
+            }
+
+            string originalName = Path.GetFileNameWithoutExtension(filePath);
+            string destName = $"{hashPrefix}_{originalName}{ext}";
+            string destDir = Path.GetFullPath(_decalImportDir);
+            string destPath = Path.Combine(destDir, destName);
+
+            // Copy to userdata if not already there
+            if (!File.Exists(destPath))
+            {
+                try
+                {
+                    Directory.CreateDirectory(destDir);
+                    File.Copy(filePath, destPath);
+                    Melon<MeshVaultPlugin>.Logger.Msg($"{DecalImportLogPrefix} Copied to: {destPath}");
+                }
+                catch (Exception ex)
+                {
+                    Melon<MeshVaultPlugin>.Logger.Error($"{DecalImportLogPrefix} Failed to copy file: {ex.Message}");
+                    return null;
+                }
+            }
+            else
+            {
+                Melon<MeshVaultPlugin>.Logger.Msg($"{DecalImportLogPrefix} File already exists: {destPath}");
+            }
+
+            // Load as texture and register directly (bypasses prefix system)
+            string texId = $"{hashPrefix}_{originalName}";
+            if (MeshVaultAPI.GetRegisteredDecal(texId) != null)
+            {
+                Melon<MeshVaultPlugin>.Logger.Msg($"{DecalImportLogPrefix} Decal \"{texId}\" already registered");
+                return $"Already imported: {texId}";
+            }
+
+            var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+            if (!ImageConversion.LoadImage(tex, fileData))
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} Failed to load image data from {filePath}");
+                UnityEngine.Object.Destroy(tex);
+                return null;
+            }
+            tex.name = texId;
+            tex.filterMode = FilterMode.Bilinear;
+
+            MeshVaultAPI.RegisterDecalDirect(texId, tex);
+            Melon<MeshVaultPlugin>.Logger.Msg($"{DecalImportLogPrefix} Registered decal: {texId} ({tex.width}x{tex.height})");
+            return $"Imported: {texId}";
+        }
+
+        /// <summary>
+        /// Loads any previously imported custom decal files from UserData/MeshVault/Decals/.
+        /// Uses RegisterDecalDirect to bypass the prefix system.
+        /// </summary>
+        private void LoadImportedDecals()
+        {
+            string dir = Path.GetFullPath(_decalImportDir);
+            if (!Directory.Exists(dir)) return;
+
+            string[] files = Directory.GetFiles(dir, "*.*");
+            int loaded = 0;
+
+            foreach (string file in files)
+            {
+                string ext = Path.GetExtension(file).ToLowerInvariant();
+                if (!_supportedImageExtensions.Contains(ext)) continue;
+
+                string texId = Path.GetFileNameWithoutExtension(file);
+                if (MeshVaultAPI.GetRegisteredDecal(texId) != null) continue;
+
+                byte[] data;
+                try
+                {
+                    data = File.ReadAllBytes(file);
+                }
+                catch (Exception ex)
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} Failed to read {file}: {ex.Message}");
+                    continue;
+                }
+
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!ImageConversion.LoadImage(tex, data))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning($"{DecalImportLogPrefix} Failed to load image: {file}");
+                    UnityEngine.Object.Destroy(tex);
+                    continue;
+                }
+
+                tex.name = texId;
+                tex.filterMode = FilterMode.Bilinear;
+
+                if (MeshVaultAPI.RegisterDecalDirect(texId, tex))
+                    loaded++;
+                else
+                    UnityEngine.Object.Destroy(tex);
+            }
+
+            if (loaded > 0)
+                Melon<MeshVaultPlugin>.Logger.Msg($"{DecalImportLogPrefix} Loaded {loaded} imported decal(s) from disk");
         }
     }
 }

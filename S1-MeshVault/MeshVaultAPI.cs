@@ -30,7 +30,8 @@ namespace MeshVault
         private const float BakedSmoothness = 0f;
         internal const string DecalPropBaseMap = "_Base_Map";
         internal const string DecalPropColor = "_Color";
-        internal const float DecalDepth = 0.5f;
+        internal const float DecalDepth = 0.1f;
+        private const string ApiLogPrefix = "[MeshVaultAPI]";
 
         internal static readonly float[] DefaultColor = { 1f, 1f, 1f, 1f };
 
@@ -38,6 +39,9 @@ namespace MeshVault
         private static bool _loaded;
 
         private static readonly Dictionary<string, string> _registeredPrefixes = new Dictionary<string, string>();
+        private static readonly Dictionary<string, string> _registeredDecalPrefixes = new Dictionary<string, string>();
+        private static readonly Dictionary<string, Texture2D> _decalRegistry = new Dictionary<string, Texture2D>();
+
         private static readonly Dictionary<string, Material> _materialCache = new Dictionary<string, Material>();
         private static readonly Dictionary<string, Texture> _textureCache = new Dictionary<string, Texture>();
 
@@ -279,7 +283,7 @@ namespace MeshVault
 
             if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(modName) || string.IsNullOrEmpty(json))
             {
-                Melon<MeshVaultPlugin>.Logger.Error("[MeshVaultAPI] RegisterMeshes: prefix, modName, and json are required");
+                Melon<MeshVaultPlugin>.Logger.Error($"{ApiLogPrefix} RegisterMeshes: prefix, modName, and json are required");
                 return -1;
             }
 
@@ -290,16 +294,16 @@ namespace MeshVault
                 if (!char.IsLetterOrDigit(c) || char.IsUpper(c))
                 {
                     Melon<MeshVaultPlugin>.Logger.Error(
-                        $"[MeshVaultAPI] RegisterMeshes: prefix \"{prefix}\" is invalid — must be lowercase alphanumeric only");
+                        $"{ApiLogPrefix} RegisterMeshes: prefix \"{prefix}\" is invalid — must be lowercase alphanumeric only");
                     return -1;
                 }
             }
 
             // Check prefix ownership
-            if (_registeredPrefixes.TryGetValue(prefix, out string existingOwner))
+            if (_registeredPrefixes.TryGetValue(prefix, out string meshExistingOwner))
             {
                 Melon<MeshVaultPlugin>.Logger.Error(
-                    $"[MeshVaultAPI] RegisterMeshes: prefix \"{prefix}\" is already claimed by \"{existingOwner}\"");
+                    $"{ApiLogPrefix} RegisterMeshes: prefix \"{prefix}\" is already claimed by \"{meshExistingOwner}\"");
                 return -1;
             }
 
@@ -312,25 +316,25 @@ namespace MeshVault
             catch (Exception ex)
             {
                 Melon<MeshVaultPlugin>.Logger.Error(
-                    $"[MeshVaultAPI] RegisterMeshes: failed to parse JSON from \"{modName}\": {ex.Message}");
+                    $"{ApiLogPrefix} RegisterMeshes: failed to parse JSON from \"{modName}\": {ex.Message}");
                 return -1;
             }
 
             if (temp.Count == 0)
             {
                 Melon<MeshVaultPlugin>.Logger.Warning(
-                    $"[MeshVaultAPI] RegisterMeshes: JSON from \"{modName}\" contained no entries");
+                    $"{ApiLogPrefix} RegisterMeshes: JSON from \"{modName}\" contained no entries");
                 return 0;
             }
 
             // Validate all IDs use the claimed prefix
-            string requiredPrefix = prefix + "_";
+            string meshRequiredPrefix = prefix + "_";
             foreach (string id in temp.Keys)
             {
-                if (!id.StartsWith(requiredPrefix))
+                if (!id.StartsWith(meshRequiredPrefix))
                 {
                     Melon<MeshVaultPlugin>.Logger.Error(
-                        $"[MeshVaultAPI] RegisterMeshes: entry \"{id}\" does not start with \"{requiredPrefix}\" — all entries from \"{modName}\" must use this prefix");
+                        $"{ApiLogPrefix} RegisterMeshes: entry \"{id}\" does not start with \"{meshRequiredPrefix}\" — all entries from \"{modName}\" must use this prefix");
                     return -1;
                 }
             }
@@ -343,7 +347,7 @@ namespace MeshVault
                 if (_cache.ContainsKey(kvp.Key))
                 {
                     Melon<MeshVaultPlugin>.Logger.Warning(
-                        $"[MeshVaultAPI] RegisterMeshes: entry \"{kvp.Key}\" already exists — skipping");
+                        $"{ApiLogPrefix} RegisterMeshes: entry \"{kvp.Key}\" already exists — skipping");
                     continue;
                 }
                 _cache[kvp.Key] = kvp.Value;
@@ -351,16 +355,217 @@ namespace MeshVault
             }
 
             Melon<MeshVaultPlugin>.Logger.Msg(
-                $"[MeshVaultAPI] Registered {count} mesh entries from \"{modName}\" (prefix: \"{prefix}\")");
+                $"{ApiLogPrefix} Registered {count} mesh entries from \"{modName}\" (prefix: \"{prefix}\")");
             return count;
         }
 
         /// <summary>
-        /// Returns true if the given prefix has been claimed by a mod.
+        /// Returns true if the given mesh prefix has been claimed by a mod.
         /// </summary>
         public static bool IsPrefixRegistered(string prefix)
         {
             return _registeredPrefixes.ContainsKey(prefix);
+        }
+
+        // ═══════════════════════════════════════════════════════════════
+        // Decal Registration
+        // ═══════════════════════════════════════════════════════════════
+
+        /// <summary>
+        /// Registers decal textures from raw image bytes under a mod-owned prefix.
+        /// Each mod must claim a unique decal prefix (first come, first served). All texture IDs
+        /// will be stored as "<paramref name="prefix"/>_name".
+        /// Intended for use with embedded resources — mod consumers embed PNGs as resources
+        /// and pass the byte data here.
+        /// If all textures fail to load, the prefix claim is released so it can be retried.
+        /// </summary>
+        /// <param name="prefix">Lowercase alphanumeric prefix (e.g. "otc"). Must not contain underscores or spaces.</param>
+        /// <param name="modName">Display name of the registering mod (for logging and conflict messages).</param>
+        /// <param name="textures">Dictionary mapping texture names to PNG/JPG byte data.
+        /// Keys that don't already start with "<paramref name="prefix"/>_" are auto-prefixed
+        /// (e.g. key "logo" with prefix "otc" → stored as "otc_logo").
+        /// Keys that already start with the prefix are used as-is.</param>
+        /// <returns>The number of decals registered, or -1 if registration failed.</returns>
+        public static int RegisterDecals(string prefix, string modName, Dictionary<string, byte[]> textures)
+        {
+            if (string.IsNullOrEmpty(prefix) || string.IsNullOrEmpty(modName) || textures == null)
+            {
+                Melon<MeshVaultPlugin>.Logger.Error($"{ApiLogPrefix} RegisterDecals: prefix, modName, and textures are required");
+                return -1;
+            }
+
+            // Validate prefix format — lowercase alphanumeric only, no underscores
+            for (int i = 0; i < prefix.Length; i++)
+            {
+                char c = prefix[i];
+                if (!char.IsLetterOrDigit(c) || char.IsUpper(c))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Error(
+                        $"{ApiLogPrefix} RegisterDecals: prefix \"{prefix}\" is invalid — must be lowercase alphanumeric only");
+                    return -1;
+                }
+            }
+
+            // Check prefix ownership
+            if (_registeredDecalPrefixes.TryGetValue(prefix, out string existingOwner))
+            {
+                Melon<MeshVaultPlugin>.Logger.Error(
+                    $"{ApiLogPrefix} RegisterDecals: prefix \"{prefix}\" is already claimed by \"{existingOwner}\"");
+                return -1;
+            }
+
+            if (textures.Count == 0)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning(
+                    $"{ApiLogPrefix} RegisterDecals: no textures provided by \"{modName}\"");
+                return 0;
+            }
+
+            // Claim prefix and load textures
+            _registeredDecalPrefixes[prefix] = modName;
+            int count = 0;
+            string requiredPrefix = prefix + "_";
+
+            foreach (var kvp in textures)
+            {
+                string id = kvp.Key.StartsWith(requiredPrefix) ? kvp.Key : requiredPrefix + kvp.Key;
+
+                if (_decalRegistry.ContainsKey(id))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning(
+                        $"{ApiLogPrefix} RegisterDecals: decal \"{id}\" already exists — skipping");
+                    continue;
+                }
+
+                byte[] data = kvp.Value;
+                if (data == null || data.Length == 0)
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning(
+                        $"{ApiLogPrefix} RegisterDecals: decal \"{id}\" has empty data — skipping");
+                    continue;
+                }
+
+                var tex = new Texture2D(2, 2, TextureFormat.RGBA32, false);
+                if (!ImageConversion.LoadImage(tex, data))
+                {
+                    Melon<MeshVaultPlugin>.Logger.Warning(
+                        $"{ApiLogPrefix} RegisterDecals: failed to load image data for \"{id}\"");
+                    UnityEngine.Object.Destroy(tex);
+                    continue;
+                }
+
+                tex.name = id;
+                tex.filterMode = FilterMode.Bilinear;
+                _decalRegistry[id] = tex;
+                count++;
+            }
+
+            // Unclaim prefix if nothing actually loaded (all images were corrupt/empty)
+            if (count == 0)
+                _registeredDecalPrefixes.Remove(prefix);
+
+            Melon<MeshVaultPlugin>.Logger.Msg(
+                $"{ApiLogPrefix} Registered {count} decal(s) from \"{modName}\" (prefix: \"{prefix}\")");
+            return count;
+        }
+
+        /// <summary>
+        /// Registers all embedded PNG/JPG resources from the given assembly as decals.
+        /// Automatically discovers image resources, extracts texture names from resource paths,
+        /// and registers them under the specified prefix.
+        /// </summary>
+        /// <param name="prefix">Lowercase alphanumeric prefix (e.g. "otc"). Must not contain underscores or spaces.</param>
+        /// <param name="modName">Display name of the registering mod.</param>
+        /// <param name="assembly">Assembly containing embedded image resources.</param>
+        /// <param name="resourcePrefix">Optional namespace prefix to filter resources (e.g. "MyMod.Decals.").
+        /// If null, all image resources in the assembly are included.</param>
+        /// <returns>The number of decals registered, or -1 if registration failed.</returns>
+        public static int RegisterDecals(string prefix, string modName, Assembly assembly, string resourcePrefix = null)
+        {
+            if (assembly == null)
+            {
+                Melon<MeshVaultPlugin>.Logger.Error($"{ApiLogPrefix} RegisterDecals: assembly is required");
+                return -1;
+            }
+
+            var textures = new Dictionary<string, byte[]>();
+            foreach (string resName in assembly.GetManifestResourceNames())
+            {
+                if (resourcePrefix != null && !resName.StartsWith(resourcePrefix))
+                    continue;
+
+                string lower = resName.ToLowerInvariant();
+                if (!lower.EndsWith(".png") && !lower.EndsWith(".jpg") && !lower.EndsWith(".jpeg"))
+                    continue;
+
+                // Extract texture name: strip prefix and extension
+                // e.g. "MyMod.Decals.logo.png" → "logo"
+                string name = resName;
+                if (resourcePrefix != null && name.StartsWith(resourcePrefix))
+                    name = name.Substring(resourcePrefix.Length);
+                int dotIdx = name.LastIndexOf('.');
+                if (dotIdx > 0)
+                    name = name.Substring(0, dotIdx);
+
+                using (var stream = assembly.GetManifestResourceStream(resName))
+                {
+                    if (stream == null) continue;
+                    using (var ms = new MemoryStream())
+                    {
+                        stream.CopyTo(ms);
+                        textures[name] = ms.ToArray();
+                    }
+                }
+            }
+
+            if (textures.Count == 0)
+            {
+                Melon<MeshVaultPlugin>.Logger.Warning(
+                    $"{ApiLogPrefix} RegisterDecals: no image resources found in assembly \"{assembly.GetName().Name}\"" +
+                    (resourcePrefix != null ? $" with prefix \"{resourcePrefix}\"" : ""));
+                return 0;
+            }
+
+            return RegisterDecals(prefix, modName, textures);
+        }
+
+        /// <summary>
+        /// Returns an array of all registered decal texture IDs.
+        /// </summary>
+        public static string[] ListRegisteredDecals()
+        {
+            var keys = new string[_decalRegistry.Count];
+            _decalRegistry.Keys.CopyTo(keys, 0);
+            return keys;
+        }
+
+        /// <summary>
+        /// Returns the Texture2D for a registered decal, or null if not found.
+        /// </summary>
+        public static Texture2D GetRegisteredDecal(string id)
+        {
+            return _decalRegistry.TryGetValue(id, out var tex) ? tex : null;
+        }
+
+        /// <summary>
+        /// Returns true if the given decal prefix has been claimed by a mod.
+        /// </summary>
+        public static bool IsDecalPrefixRegistered(string prefix)
+        {
+            return _registeredDecalPrefixes.ContainsKey(prefix);
+        }
+
+        /// <summary>
+        /// Directly registers a single decal texture without prefix validation.
+        /// For internal use by the custom import system — bypasses the prefix
+        /// ownership model since imported decals don't belong to a mod.
+        /// </summary>
+        internal static bool RegisterDecalDirect(string id, Texture2D tex)
+        {
+            if (string.IsNullOrEmpty(id) || tex == null) return false;
+            if (_decalRegistry.ContainsKey(id)) return false;
+            _decalRegistry[id] = tex;
+            return true;
         }
 
         // ═══════════════════════════════════════════════════════════════
@@ -618,9 +823,9 @@ namespace MeshVault
 
         /// <summary>
         /// Spawns a DecalProjector that projects the named texture onto nearby surfaces.
-        /// The texture is found by name from all loaded Texture2D assets.
+        /// Checks the decal registry first, then falls back to searching loaded Texture2D assets.
         /// </summary>
-        /// <param name="textureName">Name of the Texture2D to project (e.g. "Graffiti_01").</param>
+        /// <param name="textureName">Name of the Texture2D to project (e.g. "Graffiti_01" or a registered decal ID).</param>
         /// <param name="position">World position for the projector.</param>
         /// <param name="rotation">World rotation — projector's forward (+Z) should face into the surface.</param>
         /// <param name="tintColor">Optional color tint applied to the decal. Defaults to white.</param>
@@ -630,7 +835,7 @@ namespace MeshVault
         public static GameObject SpawnDecal(string textureName, Vector3 position, Quaternion rotation,
             Color? tintColor = null, Vector3? scale = null, Transform parent = null)
         {
-            var tex = FindSceneTexture(textureName) as Texture2D;
+            var tex = GetRegisteredDecal(textureName) ?? FindSceneTexture(textureName) as Texture2D;
             if (tex == null)
             {
                 Melon<MeshVaultPlugin>.Logger.Warning($"Decal texture \"{textureName}\" not found");
@@ -650,6 +855,14 @@ namespace MeshVault
             var mat = new Material(baseMat);
             mat.SetTexture(DecalPropBaseMap, tex);
             mat.SetColor(DecalPropColor, tintColor ?? Color.white);
+
+            // Clear inherited properties from cloned base material that cause artifacts
+            if (mat.HasProperty("_Normal_Map"))
+                mat.SetTexture("_Normal_Map", null);
+            if (mat.HasProperty("_NormalMap"))
+                mat.SetTexture("_NormalMap", null);
+            if (mat.HasProperty("_BumpMap"))
+                mat.SetTexture("_BumpMap", null);
 
             projector.material = mat;
             var sz = scale ?? Vector3.one;
