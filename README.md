@@ -1,6 +1,7 @@
 # MeshVault
-**IL2CPP:** [![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_q6ywm356Uyol8y5fXDHvYg-j/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_q6ywm356Uyol8y5fXDHvYg-j)
-**Mono:** [![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att_IHEwtJnEYdRj0oQRcZYkQpBw/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_IHEwtJnEYdRj0oQRcZYkQpBw)
+**IL2CPP:** [![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_QBLdYawNqWR70uMrRZa8yp9r/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_QBLdYawNqWR70uMrRZa8yp9r)
+**Mono:** [![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att_SML15-YE0SEU7pbgYkVLlahM/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_SML15-YE0SEU7pbgYkVLlahM)
+**Mono Debug:** [![MLVScan Mono Debug Attestation](https://api.mlvscan.com/public/attestations/att_lbDuEcQpqkg5QybjhCtSBkF5/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_lbDuEcQpqkg5QybjhCtSBkF5)
 
 A shared mesh spawning library for Schedule I mods. Place any game prop with one line of code.
 
