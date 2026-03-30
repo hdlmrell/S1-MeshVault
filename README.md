@@ -1,4 +1,6 @@
 # MeshVault
+[![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_z1JhRFwt4GyEmvJWmv9TENNE/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_z1JhRFwt4GyEmvJWmv9TENNE)
+[![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att__rRN4uPLpZw9CGFgWMOFXXY3/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att__rRN4uPLpZw9CGFgWMOFXXY3)
 
 **MeshVault** is a MelonLoader plugin for Schedule I that provides a shared mesh database and spawning API. Mods can query, spawn, and render game meshes by ID without needing to locate or extract geometry at runtime.
 
