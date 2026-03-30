@@ -110,14 +110,14 @@ jobs:
           fi
 
           declare -a ARTIFACTS=(
-            "S1-MeshVault/bin/Release/net6.0/MeshVault.Il2Cpp.dll|MeshVault.Il2Cpp.dll $version|MLVScan IL2CPP Attestation"
-            "S1-MeshVault/bin/MonoRelease/netstandard2.1/MeshVault.Mono.dll|MeshVault.Mono.dll $version|MLVScan Mono Attestation"
+            "S1-MeshVault/bin/Release/net6.0/MeshVault.Il2Cpp.dll|MeshVault.Il2Cpp.dll $version|MLVScan IL2CPP Attestation|IL2CPP"
+            "S1-MeshVault/bin/MonoRelease/netstandard2.1/MeshVault.Mono.dll|MeshVault.Mono.dll $version|MLVScan Mono Attestation|Mono"
           )
 
           > /tmp/badges.txt
 
           for entry in "${ARTIFACTS[@]}"; do
-            IFS='|' read -r artifact_path display_name badge_alt <<< "$entry"
+            IFS='|' read -r artifact_path display_name badge_alt badge_label <<< "$entry"
 
             if [ ! -f "$artifact_path" ]; then
               echo "::error::Artifact not found: $artifact_path"
@@ -206,7 +206,7 @@ jobs:
             public_url=$(echo "$published_json" | jq -r '.publicUrl')
             badge_url=$(echo "$published_json" | jq -r '.badgeUrl')
 
-            echo "[![$badge_alt]($badge_url?style=split-pill)]($public_url)" >> /tmp/badges.txt
+            echo "**$badge_label:** [![$badge_alt]($badge_url?style=split-pill)]($public_url)" >> /tmp/badges.txt
 
             {
               echo "## $display_name"
@@ -229,7 +229,7 @@ jobs:
           fi
 
           # Remove existing MLVScan badge lines
-          sed -i '/^\[!\[MLVScan.*Attestation\]/d' README.md
+          sed -i '/MLVScan.*Attestation/d' README.md
 
           # Insert new badges after line 1 (the # MeshVault heading)
           sed -i "1r /tmp/badges.txt" README.md
