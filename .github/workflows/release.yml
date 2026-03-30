@@ -63,6 +63,12 @@ jobs:
       - name: Build Mono Release
         run: dotnet build S1-MeshVault/S1-MeshVault.csproj -c MonoRelease -p:BetaBuild=true
 
+      - name: Build Mono Debug
+        run: dotnet build S1-MeshVault/S1-MeshVault.csproj -c MonoDebug -p:BetaBuild=true
+
+      - name: Stage Mono Debug DLL
+        run: cp S1-MeshVault/bin/MonoDebug/netstandard2.1/MeshVault.Mono.dll S1-MeshVault/bin/MonoDebug/netstandard2.1/MeshVault.Mono.Debug.dll
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -70,6 +76,7 @@ jobs:
           path: |
             S1-MeshVault/bin/Release/net6.0/MeshVault.Il2Cpp.dll
             S1-MeshVault/bin/MonoRelease/netstandard2.1/MeshVault.Mono.dll
+            S1-MeshVault/bin/MonoDebug/netstandard2.1/MeshVault.Mono.Debug.dll
 
       - name: Upload to GitHub release
         if: github.event_name == 'release'
@@ -79,6 +86,7 @@ jobs:
           gh release upload "${{ github.event.release.tag_name }}" \
             "S1-MeshVault/bin/Release/net6.0/MeshVault.Il2Cpp.dll" \
             "S1-MeshVault/bin/MonoRelease/netstandard2.1/MeshVault.Mono.dll" \
+            "S1-MeshVault/bin/MonoDebug/netstandard2.1/MeshVault.Mono.Debug.dll" \
             --clobber
 
       - name: Check MLVScan configuration
@@ -112,6 +120,7 @@ jobs:
           declare -a ARTIFACTS=(
             "S1-MeshVault/bin/Release/net6.0/MeshVault.Il2Cpp.dll|MeshVault.Il2Cpp.dll $version|MLVScan IL2CPP Attestation|IL2CPP"
             "S1-MeshVault/bin/MonoRelease/netstandard2.1/MeshVault.Mono.dll|MeshVault.Mono.dll $version|MLVScan Mono Attestation|Mono"
+            "S1-MeshVault/bin/MonoDebug/netstandard2.1/MeshVault.Mono.Debug.dll|MeshVault.Mono.Debug.dll $version|MLVScan Mono Debug Attestation|Mono Debug"
           )
 
           > /tmp/badges.txt

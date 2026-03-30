@@ -37,7 +37,7 @@ var desk = MeshVaultAPI.Spawn("desk_counter_l", position, Quaternion.identity);
 
 ### Getting started
 
-Add a reference to `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` in your project. Then call `MeshVaultAPI.Init()` to load the database and start spawning.
+Reference `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` in your project to build against the spawning API. Release builds are API-only — all extraction tools are stripped. To use MeshPlacer and other in-game tools, download `MeshVault.Mono.Debug.dll` from [GitHub releases](https://github.com/hdlmrell/S1-MeshVault/releases), rename it to `MeshVault.Mono.dll`, and swap it into your `Plugins` folder. See the [full docs](https://hdlmrell.github.io/S1-MeshVault/) for details.
 
 Full documentation with examples, API reference, and JSON format: **[hdlmrell.github.io/S1-MeshVault](https://hdlmrell.github.io/S1-MeshVault/)**
 
@@ -47,11 +47,12 @@ Full documentation with examples, API reference, and JSON format: **[hdlmrell.gi
 
 ## Security
 
-Both release DLLs are scanned and attested through [MLVScan](https://mlvscan.com) on every release. MLVScan performs automated static analysis to verify that mod binaries are clean and free of malicious code.
+All release DLLs are scanned and attested through [MLVScan](https://mlvscan.com) on every release. MLVScan performs automated static analysis to verify that mod binaries are clean and free of malicious code.
 
 Verify the latest scans yourself:
 - [IL2CPP Attestation](https://mlvscan.com/attestations/att_z1JhRFwt4GyEmvJWmv9TENNE)
 - [Mono Attestation](https://mlvscan.com/attestations/att__rRN4uPLpZw9CGFgWMOFXXY3)
+- [Mono Debug Attestation](https://mlvscan.com/attestations/) *(updated each release)*
 - [GitHub Source](https://github.com/hdlmrell/S1-MeshVault)
 
 ## License

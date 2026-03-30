@@ -30,7 +30,9 @@ Add a reference to `MeshVault.Il2Cpp.dll` (IL2CPP) or `MeshVault.Mono.dll` (Mono
 </Reference>
 ```
 
-You can find the DLL in your r2modman profile's `Mods` folder after installing any mod that depends on MeshVault.
+You can find the release DLL in your r2modman profile's `Plugins` folder after installing any mod that depends on MeshVault. This is what you build your mod against.
+
+> **Release vs Debug builds:** Release DLLs are **API-only** — you can build against them and call `Spawn()`, `RegisterMeshes()`, etc. All in-game tools (MeshPlacer, hierarchy picker, GLB export) are stripped from release builds via `#if DEBUG`. To use those tools, download `MeshVault.Mono.Debug.dll` from the [GitHub releases](https://github.com/hdlmrell/S1-MeshVault/releases), rename it to `MeshVault.Mono.dll`, and replace the release version in your `Plugins` folder. Both builds share the same assembly name and API surface, so your mod works against either one.
 
 ### 2. Spawn your first mesh
 
@@ -116,7 +118,7 @@ if (MeshVaultAPI.HasMesh("streetlight_01"))
 
 Players don't need to install MeshVault manually. It's pulled in automatically as a dependency when you install a mod that uses it via **r2modman**, **Vortex**, or **Gale**.
 
-For manual installs, drop `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` into your `Mods` folder.
+For manual installs, drop `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` into your `Plugins` folder.
 
 **Requirements:** [MelonLoader](https://melonwiki.xyz/) v0.7.0+, Schedule I by TVGS
 

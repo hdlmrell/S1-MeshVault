@@ -1,7 +1,7 @@
 using MelonLoader;
 using UnityEngine;
 
-[assembly: MelonInfo(typeof(MeshVault.MeshVaultPlugin), "MeshVault", "1.0.7", "hdlmrell")]
+[assembly: MelonInfo(typeof(MeshVault.MeshVaultPlugin), "MeshVault", "1.0.8", "hdlmrell")]
 [assembly: MelonColor(255, 100, 149, 237)]
 
 namespace MeshVault

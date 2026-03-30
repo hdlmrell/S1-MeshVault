@@ -49,9 +49,11 @@ MeshVault gives you access to a growing library of pre-extracted game meshes. No
 
 | Configuration | Runtime | Purpose |
 |:--|:--|:--|
-| `MonoDebug` | Mono (netstandard2.1) | Development. Includes extraction tools and write API |
-| `Release` | IL2CPP (net6.0) | Distribution. Read-only, embedded database |
-| `MonoRelease` | Mono (netstandard2.1) | Distribution. Read-only, embedded database |
+| `MonoDebug` | Mono (netstandard2.1) | Development. Includes extraction tools, write API, MeshPlacer |
+| `Release` | IL2CPP (net6.0) | Distribution. Read-only spawning API only |
+| `MonoRelease` | Mono (netstandard2.1) | Distribution. Read-only spawning API only |
+
+> **Release builds are API-only.** You can build your mod against the release DLLs to call `Spawn()`, `RegisterMeshes()`, etc. All in-game tools (MeshPlacer, hierarchy picker, GLB export) are stripped via `#if DEBUG`. To use those tools, download `MeshVault.Mono.Debug.dll` from the [GitHub releases](https://github.com/hdlmrell/S1-MeshVault/releases), rename it to `MeshVault.Mono.dll`, and replace the release version in your `Plugins` folder. Both builds share the same assembly name — your mod works against either one.
 
 ### Adding meshes to the database
 
@@ -66,7 +68,7 @@ Copy `LocalPaths.targets.example` to `LocalPaths.targets` in the project directo
 
 ### Releases
 
-Releases are automated. Push your changes to `stable`, then create a GitHub release with a version tag (e.g. `v1.0.7`). The CI pipeline builds both IL2CPP and Mono DLLs, attaches them to the release, and publishes MLVScan attestations automatically.
+Releases are automated. Push your changes to `stable`, then create a GitHub release with a version tag (e.g. `v1.0.7`). The CI pipeline builds all three DLLs (IL2CPP Release, Mono Release, Mono Debug), attaches them to the release, and publishes MLVScan attestations for each automatically.
 
 ---
 
