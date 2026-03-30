@@ -1,6 +1,6 @@
 # MeshVault
-**IL2CPP:** [![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_5qE-fO-U4N9SesRh51b82Cse/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_5qE-fO-U4N9SesRh51b82Cse)
-**Mono:** [![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att_0_BOTn1cOu53WNtHpK5GrcaZ/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_0_BOTn1cOu53WNtHpK5GrcaZ)
+**IL2CPP:** [![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_q6ywm356Uyol8y5fXDHvYg-j/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_q6ywm356Uyol8y5fXDHvYg-j)
+**Mono:** [![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att_IHEwtJnEYdRj0oQRcZYkQpBw/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_IHEwtJnEYdRj0oQRcZYkQpBw)
 
 A shared mesh spawning library for Schedule I mods. Place any game prop with one line of code.
 
