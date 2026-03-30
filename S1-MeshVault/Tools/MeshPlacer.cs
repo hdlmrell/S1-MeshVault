@@ -862,6 +862,8 @@ namespace MeshVault.Tools
             if (_previewDbId != null)
             {
                 output += $"\n[MeshPlacer] {FormatSpawnCall(_previewDbId, p, r, _positionerMaterialOverrides, _positionerColorOverrides)}";
+                if (s != Vector3.one)
+                    output += $"\n[MeshPlacer] go.transform.localScale = new Vector3({s.x:F4}f, {s.y:F4}f, {s.z:F4}f);";
             }
 
             if (_previewDecalTexName != null)

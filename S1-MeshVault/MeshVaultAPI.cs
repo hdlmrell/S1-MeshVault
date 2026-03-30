@@ -941,6 +941,7 @@ namespace MeshVault
             if (_materialCache.TryGetValue(matName, out var cached) && cached != null)
                 return cached;
 
+            // First pass: scan active MeshRenderers (fast, scoped to scene)
             var renderers = UnityEngine.Object.FindObjectsOfType<MeshRenderer>();
             foreach (var r in renderers)
             {
@@ -956,6 +957,19 @@ namespace MeshVault
                     }
                 }
             }
+
+            // Fallback: scan all loaded materials (covers multiplayer clients
+            // where scene objects may not be fully active yet)
+            var allMaterials = Resources.FindObjectsOfTypeAll<Material>();
+            foreach (var m in allMaterials)
+            {
+                if (m != null && m.name == matName)
+                {
+                    _materialCache[matName] = m;
+                    return m;
+                }
+            }
+
             return null;
         }
 
