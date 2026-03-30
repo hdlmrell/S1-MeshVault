@@ -83,24 +83,13 @@
 		<Reference Include="ScheduleOne.Core"><HintPath>$(GameDllPath)\ScheduleOne.Core.dll</HintPath></Reference>
 	</ItemGroup>
 
-	<!-- Sync AssemblyVersion/FileVersion from MelonInfo in Core.cs -->
-	<Target Name="SyncVersion" BeforeTargets="BeforeBuild">
-		<Exec Command="sed -n &quot;s/.*MelonInfo.*&quot;\([0-9.]*\)&quot;.*/\1/p&quot; Core.cs"
-			  ConsoleToMSBuild="true" StandardOutputImportance="low"
-			  Condition="'$(OS)' != 'Windows_NT'">
-			<Output TaskParameter="ConsoleOutput" PropertyName="_ParsedVersion" />
-		</Exec>
-		<Exec Command="powershell -NoProfile -Command &quot;(Select-String -Path Core.cs -Pattern 'MelonInfo.*?\&quot;(\d+\.\d+\.\d+)\&quot;').Matches[0].Groups[1].Value&quot;"
-			  ConsoleToMSBuild="true" StandardOutputImportance="low"
-			  Condition="'$(OS)' == 'Windows_NT'">
-			<Output TaskParameter="ConsoleOutput" PropertyName="_ParsedVersion" />
-		</Exec>
-		<PropertyGroup Condition="'$(_ParsedVersion)' != ''">
-			<AssemblyVersion>$(_ParsedVersion).0</AssemblyVersion>
-			<FileVersion>$(_ParsedVersion).0</FileVersion>
-		</PropertyGroup>
-		<Message Importance="high" Text="Version synced from Core.cs: $(_ParsedVersion)" Condition="'$(_ParsedVersion)' != ''" />
-	</Target>
+	<!-- Sync AssemblyVersion/FileVersion from MelonInfo in Core.cs (pure MSBuild, no shell) -->
+	<PropertyGroup>
+		<_CoreContent>$([System.IO.File]::ReadAllText('$(MSBuildProjectDirectory)/Core.cs'))</_CoreContent>
+		<_ParsedVersion>$([System.Text.RegularExpressions.Regex]::Match($(_CoreContent), 'MelonInfo.*?&quot;(\d+\.\d+\.\d+)&quot;').Groups[1].Value)</_ParsedVersion>
+		<AssemblyVersion Condition="'$(_ParsedVersion)' != ''">$(_ParsedVersion).0</AssemblyVersion>
+		<FileVersion Condition="'$(_ParsedVersion)' != ''">$(_ParsedVersion).0</FileVersion>
+	</PropertyGroup>
 
 	<!-- Embed the mesh database so release builds ship with a built-in copy -->
 	<ItemGroup>
