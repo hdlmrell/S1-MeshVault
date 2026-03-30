@@ -1,0 +1,12 @@
+title: MeshVault
+description: Shared mesh database and spawning API for Schedule I mods
+remote_theme: just-the-docs/just-the-docs
+
+url: https://hdlmrell.github.io/S1-MeshVault
+
+aux_links:
+  "GitHub": "https://github.com/hdlmrell/S1-MeshVault"
+
+color_scheme: dark
+
+footer_content: "MeshVault is licensed under <a href=\"https://creativecommons.org/licenses/by-nc-sa/4.0/\">CC BY-NC-SA 4.0</a>."

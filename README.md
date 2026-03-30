@@ -2,10 +2,27 @@
 
 **MeshVault** is a MelonLoader plugin for Schedule I that provides a shared mesh database and spawning API. Mods can query, spawn, and render game meshes by ID without needing to locate or extract geometry at runtime.
 
-> **This is a library mod.** MeshVault does nothing on its own — it only provides functionality for other mods that depend on it. Install it only if a mod you use lists it as a dependency.
+> **This is a library mod.** MeshVault does nothing on its own. It only provides functionality for other mods that depend on it. Install it only if a mod you use lists it as a dependency.
 
 > **DUAL BUILD:** This plugin ships both `MeshVault.Il2Cpp.dll` and `MeshVault.Mono.dll`.
 > Install both alongside **OTC Loader** (or any branch-detection plugin) and the correct DLL is loaded automatically.
+
+## Documentation
+
+Full developer documentation is available at **[hdlmrell.github.io/S1-MeshVault](https://hdlmrell.github.io/S1-MeshVault/)**.
+
+- [API Reference](https://hdlmrell.github.io/S1-MeshVault/api-reference): All public methods with parameters, return values, and examples
+- [JSON Schema](https://hdlmrell.github.io/S1-MeshVault/json-schema): Every field in MeshDatabase.json documented
+
+## Features
+
+- **Shared mesh database**: Pre-extracted game meshes stored in JSON, shared across all mods
+- **One-line spawning**: `MeshVaultAPI.Spawn("dumpster", position, rotation)`
+- **Material overrides**: Swap materials or tint colors per-slot at spawn time
+- **Material property overrides**: `colorTint`, `metallic`, `smoothness`, `emissiveColor` per entry in JSON
+- **Custom mesh registration**: Mods register their own entries via `RegisterMeshes()` with prefix namespacing
+- **Decal system**: Register and project textures onto surfaces with `SpawnDecal()`
+- **Dual runtime**: Ships both IL2CPP and Mono builds
 
 ## How it works
 
@@ -15,44 +32,7 @@ MeshVault stores mesh geometry, materials, submesh data, baked textures, and chi
 1. Disk file at `UserData/MeshVault/MeshDatabase.json` (if present)
 2. Embedded resource baked into the DLL (release builds)
 
-End users never need a disk file — the release DLL contains the full database. Developers and collaborators use the disk file so they can add and iterate on entries without rebuilding.
-
-## For mod authors
-
-Add a reference to `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` and call the API:
-
-```csharp
-using MeshVault;
-
-// Check if a mesh exists
-if (MeshVaultAPI.HasMesh("streetlight_01"))
-{
-    // Spawn it
-    var go = MeshVaultAPI.Spawn("streetlight_01", position, rotation);
-}
-
-// List all available mesh IDs
-string[] ids = MeshVaultAPI.ListMeshes();
-
-// Get raw mesh data
-MeshEntry entry = MeshVaultAPI.GetMesh("streetlight_01");
-```
-
-The API handles mesh construction, multi-submesh materials, baked texture lookups, scene material matching, and child mesh attachment automatically.
-
-### Material overrides
-
-Instead of storing duplicate database entries for color/material variants of the same geometry, MeshVault supports per-slot material overrides at spawn time. The `materialOverrides` array maps positionally to submeshes and then child meshes — null entries keep the default material.
-
-```csharp
-// Override submesh 1's material, keep everything else default
-var go = MeshVaultAPI.Spawn("sofa_double", position, rotation,
-    materialOverrides: new[] { null, "leather_black" });
-
-// Override both submeshes
-var go2 = MeshVaultAPI.Spawn("sofa_double", position, rotation,
-    materialOverrides: new[] { "carpet red mat", "wood_dark" });
-```
+End users never need a disk file. The release DLL contains the full database. Developers and collaborators use the disk file so they can add and iterate on entries without rebuilding.
 
 ## Build configurations
 
@@ -60,22 +40,22 @@ MeshVault has three build configurations:
 
 | Configuration | Runtime | Purpose |
 |---|---|---|
-| `MonoDebug` | Mono (netstandard2.1) | Development — includes extraction tools and write API |
-| `Release` | IL2CPP (net6.0) | Distribution — read-only, embedded database |
-| `MonoRelease` | Mono (netstandard2.1) | Distribution — read-only, embedded database |
+| `MonoDebug` | Mono (netstandard2.1) | Development. Includes extraction tools and write API |
+| `Release` | IL2CPP (net6.0) | Distribution. Read-only, embedded database |
+| `MonoRelease` | Mono (netstandard2.1) | Distribution. Read-only, embedded database |
 
 ### Debug builds (`MonoDebug`)
 
 Debug builds include the full extraction toolset gated behind `#if DEBUG`:
 
-* **MeshPlacer** — In-game tool (toggle with `F9`) for browsing scene hierarchies, extracting meshes, managing the database, and test-spawning entries.
-* **Write/CRUD API** — `SaveMesh()`, `RemoveEntry()`, `RenameEntry()`, `WriteDatabase()` for modifying the database at runtime.
+* **MeshPlacer**: In-game tool (toggle with `F9`) for browsing scene hierarchies, extracting meshes, managing the database, and test-spawning entries.
+* **Write/CRUD API**: `SaveMesh()`, `RemoveEntry()`, `RenameEntry()`, `WriteDatabase()` for modifying the database at runtime.
 
 Debug builds write to `UserData/MeshVault/MeshDatabase.json` on disk. Post-build copy targets for local deployment can be configured in `LocalPaths.targets`.
 
 ### Release builds
 
-Release builds are **read-only** — no extraction tools, no write API, no debug UI. The public surface is limited to `Init()`, `HasMesh()`, `GetMesh()`, `ListMeshes()`, `GetAllEntries()`, `Spawn()`, and the material/texture lookup helpers.
+Release builds are **read-only**. No extraction tools, no write API, no debug UI. The public surface is limited to query methods, `Spawn()`, `SpawnDecal()`, registration APIs, and material/texture lookup helpers.
 
 Release builds embed `MeshDatabase.json` directly into the DLL as a resource. A pre-build step automatically copies the latest database from your game's `UserData` folder into the project before compilation.
 
@@ -104,12 +84,12 @@ Release builds embed `MeshDatabase.json` directly into the DLL as a resource. A 
 
 Copy `LocalPaths.targets.example` (or create `LocalPaths.targets` manually) in the project directory and fill in your local paths:
 
-* `R2ProfileRoot` — r2modman profile root (IL2CPP)
-* `MonoR2ProfileRoot` — r2modman profile root (Mono)
-* `MeshDatabaseSourcePath` — full path to your authoritative `MeshDatabase.json`
+* `R2ProfileRoot`: r2modman profile root (IL2CPP)
+* `MonoR2ProfileRoot`: r2modman profile root (Mono)
+* `MeshDatabaseSourcePath`: full path to your authoritative `MeshDatabase.json`
 * Game DLL paths for each build configuration
 
-`LocalPaths.targets` is gitignored — each developer maintains their own.
+`LocalPaths.targets` is gitignored. Each developer maintains their own.
 
 ## Installation
 
@@ -129,10 +109,10 @@ If a mod requires MeshVault and you are not using a mod manager, drop `MeshVault
 **Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)**
 
 You are free to:
-* **Share** — copy and redistribute the material in any medium or format.
-* **Adapt** — remix, transform, and build upon the material.
+* **Share**: copy and redistribute the material in any medium or format.
+* **Adapt**: remix, transform, and build upon the material.
 
 Under the following terms:
-* **Attribution** — You must give appropriate credit to the original author (hdlmrell) and indicate if changes were made. You may not suggest the author endorses you or your use.
-* **NonCommercial** — You may not use the material for commercial purposes.
-* **ShareAlike** — If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
+* **Attribution**: You must give appropriate credit to the original author (hdlmrell) and indicate if changes were made. You may not suggest the author endorses you or your use.
+* **NonCommercial**: You may not use the material for commercial purposes.
+* **ShareAlike**: If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
