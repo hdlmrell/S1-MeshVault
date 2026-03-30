@@ -2,119 +2,74 @@
 **IL2CPP:** [![MLVScan IL2CPP Attestation](https://api.mlvscan.com/public/attestations/att_5qE-fO-U4N9SesRh51b82Cse/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_5qE-fO-U4N9SesRh51b82Cse)
 **Mono:** [![MLVScan Mono Attestation](https://api.mlvscan.com/public/attestations/att_0_BOTn1cOu53WNtHpK5GrcaZ/badge.svg?style=split-pill)](https://mlvscan.com/attestations/att_0_BOTn1cOu53WNtHpK5GrcaZ)
 
-**MeshVault** is a MelonLoader plugin for Schedule I that provides a shared mesh database and spawning API. Mods can query, spawn, and render game meshes by ID without needing to locate or extract geometry at runtime.
+A shared mesh spawning library for Schedule I mods. Place any game prop with one line of code.
 
-> **This is a library mod.** MeshVault does nothing on its own. It only provides functionality for other mods that depend on it. Install it only if a mod you use lists it as a dependency.
+```csharp
+var desk = MeshVaultAPI.Spawn("desk_counter_l", position, Quaternion.identity);
+```
 
-> **DUAL BUILD:** This plugin ships both `MeshVault.Il2Cpp.dll` and `MeshVault.Mono.dll`.
-> Install both alongside **OTC Loader** (or any branch-detection plugin) and the correct DLL is loaded automatically.
+Both release DLLs are scanned and attested through [MLVScan](https://mlvscan.com) on every release. Click the badges above to verify.
 
-## Documentation
+---
 
-Full developer documentation is available at **[hdlmrell.github.io/S1-MeshVault](https://hdlmrell.github.io/S1-MeshVault/)**.
+## For Players
 
-- [API Reference](https://hdlmrell.github.io/S1-MeshVault/api-reference): All public methods with parameters, return values, and examples
-- [JSON Schema](https://hdlmrell.github.io/S1-MeshVault/json-schema): Every field in MeshDatabase.json documented
+**You don't need to install MeshVault yourself.** If a mod you download depends on it, your mod manager (r2modman, Vortex, or Gale) will install it automatically.
 
-## Features
+For manual installs, drop `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` into your `Plugins` folder. This plugin ships both IL2CPP and Mono builds.
 
-- **Shared mesh database**: Pre-extracted game meshes stored in JSON, shared across all mods
-- **One-line spawning**: `MeshVaultAPI.Spawn("dumpster", position, rotation)`
-- **Material overrides**: Swap materials or tint colors per-slot at spawn time
-- **Material property overrides**: `colorTint`, `metallic`, `smoothness`, `emissiveColor` per entry in JSON
-- **Custom mesh registration**: Mods register their own entries via `RegisterMeshes()` with prefix namespacing
-- **Decal system**: Register and project textures onto surfaces with `SpawnDecal()`
-- **Dual runtime**: Ships both IL2CPP and Mono builds
+**Requirements:** [MelonLoader](https://melonwiki.xyz/) v0.7.0+, Schedule I by TVGS
 
-## How it works
+---
 
-MeshVault stores mesh geometry, materials, submesh data, baked textures, and child meshes in a single `MeshDatabase.json` file. At runtime, the database is loaded once and meshes are spawned on demand via `MeshVaultAPI.Spawn()`.
+## For Mod Developers
 
-**Loading priority:**
-1. Disk file at `UserData/MeshVault/MeshDatabase.json` (if present)
-2. Embedded resource baked into the DLL (release builds)
+MeshVault gives you access to a growing library of pre-extracted game meshes. No asset bundles, no hunting for materials at runtime. Pick an ID, call Spawn, and you get a fully configured GameObject with geometry, materials, colliders, and child objects.
 
-End users never need a disk file. The release DLL contains the full database. Developers and collaborators use the disk file so they can add and iterate on entries without rebuilding.
+**What you can do:**
+- Spawn any game prop by ID: `MeshVaultAPI.Spawn("dumpster", pos, rot)`
+- Swap materials or tint colors per-slot at spawn time
+- Project textures onto surfaces with `SpawnDecal()`
+- Register your own custom meshes with `RegisterMeshes()` so other mods can use them too
+- Customize materials in JSON with `colorTint`, `metallic`, `smoothness`, and `emissiveColor`
 
-## Build configurations
+**Get started:** Full documentation with examples, API reference, and JSON format is at **[hdlmrell.github.io/S1-MeshVault](https://hdlmrell.github.io/S1-MeshVault/)**.
 
-MeshVault has three build configurations:
+| Page | What you'll find |
+|:-----|:-----------------|
+| [Quick Start](https://hdlmrell.github.io/S1-MeshVault/) | Installation, first spawn, common tasks |
+| [API Reference](https://hdlmrell.github.io/S1-MeshVault/api-reference) | Every public method with parameters and examples |
+| [JSON Schema](https://hdlmrell.github.io/S1-MeshVault/json-schema) | How to author mesh JSON for shipping your own geometry |
+
+---
+
+## Contributing
+
+### Build configurations
 
 | Configuration | Runtime | Purpose |
-|---|---|---|
+|:--|:--|:--|
 | `MonoDebug` | Mono (netstandard2.1) | Development. Includes extraction tools and write API |
 | `Release` | IL2CPP (net6.0) | Distribution. Read-only, embedded database |
 | `MonoRelease` | Mono (netstandard2.1) | Distribution. Read-only, embedded database |
-
-### Debug builds (`MonoDebug`)
-
-Debug builds include the full extraction toolset gated behind `#if DEBUG`:
-
-* **MeshPlacer**: In-game tool (toggle with `F9`) for browsing scene hierarchies, extracting meshes, managing the database, and test-spawning entries.
-* **Write/CRUD API**: `SaveMesh()`, `RemoveEntry()`, `RenameEntry()`, `WriteDatabase()` for modifying the database at runtime.
-
-Debug builds write to `UserData/MeshVault/MeshDatabase.json` on disk. Post-build copy targets for local deployment can be configured in `LocalPaths.targets`.
-
-### Release builds
-
-Release builds are **read-only**. No extraction tools, no write API, no debug UI. The public surface is limited to query methods, `Spawn()`, `SpawnDecal()`, registration APIs, and material/texture lookup helpers.
-
-Release builds embed `MeshDatabase.json` directly into the DLL as a resource. A pre-build step automatically copies the latest database from your game's `UserData` folder into the project before compilation.
-
-## Developer workflow
 
 ### Adding meshes to the database
 
 1. Build and deploy `MonoDebug`.
 2. Launch the game. Press `F9` to open MeshPlacer.
-3. Use the **Hierarchy Picker** to browse scene objects and extract meshes.
-4. Use the **Combined Mesh Browser** to manage, rename, delete, and test-spawn entries.
-5. Extracted meshes are saved to `UserData/MeshVault/MeshDatabase.json` automatically.
-
-### Building a release
-
-1. Make sure your `MeshDatabase.json` is up to date (step 5 above).
-2. Build a release configuration:
-   ```
-   dotnet build -c MonoRelease
-   dotnet build -c Release
-   ```
-3. The pre-build target (`UpdateMeshDatabase`) automatically copies `MeshDatabase.json` from the path defined by `MeshDatabaseSourcePath` in `LocalPaths.targets` into the project's `Resources/` folder, where it is embedded into the DLL.
-4. If the source file doesn't exist, the build fails with a clear error message telling you to extract meshes first.
+3. Use the Hierarchy Picker to browse scene objects and extract meshes.
+4. Extracted meshes are saved to `UserData/MeshVault/MeshDatabase.json`.
 
 ### Project setup
 
-Copy `LocalPaths.targets.example` (or create `LocalPaths.targets` manually) in the project directory and fill in your local paths:
+Copy `LocalPaths.targets.example` to `LocalPaths.targets` in the project directory and fill in your local paths. This file is gitignored. Each developer maintains their own.
 
-* `R2ProfileRoot`: r2modman profile root (IL2CPP)
-* `MonoR2ProfileRoot`: r2modman profile root (Mono)
-* `MeshDatabaseSourcePath`: full path to your authoritative `MeshDatabase.json`
-* Game DLL paths for each build configuration
+### Releases
 
-`LocalPaths.targets` is gitignored. Each developer maintains their own.
+Releases are automated. Push your changes to `stable`, then create a GitHub release with a version tag (e.g. `v1.0.7`). The CI pipeline builds both IL2CPP and Mono DLLs, attaches them to the release, and publishes MLVScan attestations automatically.
 
-## Installation
-
-MeshVault is installed automatically when you install a mod that depends on it. You do not need to install it separately unless a mod's instructions tell you to.
-
-### Using a mod manager
-When you install a dependent mod via **r2modman**, **Vortex**, or **Gale**, MeshVault will be pulled in as a dependency automatically.
-
-### Manual installation
-If a mod requires MeshVault and you are not using a mod manager, drop `MeshVault.Il2Cpp.dll` or `MeshVault.Mono.dll` (whichever matches your game branch) into your `Mods` folder.
-
-## Requirements
-- [MelonLoader](https://melonwiki.xyz/) v0.7.0+
-- Schedule I by TVGS
+---
 
 ## License
-**Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International (CC BY-NC-SA 4.0)**
 
-You are free to:
-* **Share**: copy and redistribute the material in any medium or format.
-* **Adapt**: remix, transform, and build upon the material.
-
-Under the following terms:
-* **Attribution**: You must give appropriate credit to the original author (hdlmrell) and indicate if changes were made. You may not suggest the author endorses you or your use.
-* **NonCommercial**: You may not use the material for commercial purposes.
-* **ShareAlike**: If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). You may share and adapt this work for non-commercial purposes with attribution and share-alike.
